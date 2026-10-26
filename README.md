@@ -26,3 +26,8 @@ GitHub Pages 請設為：Settings → Pages → Deploy from a branch → main �
 `node build.mjs` 從 `dist/` 原始碼產生 `index.html` 和 `docs/index.html`。
 
 牌圖採用使用者提供的 FluffyStuff 麻將素材，CC0 授權，見 `LICENSE-tiles.md`。
+
+## 底盤與本機紀錄
+
+底盤預設每次開啟、每局均重新打亂；勾選「不打亂」才使用固定順序。各瀏覽器以自己的隨機種子產生底盤。設定與最近 100 局存於該瀏覽器的 localStorage，可在「本機紀錄」清除；不會上傳紀錄。歷史重現保留原局底盤及牌序。
+

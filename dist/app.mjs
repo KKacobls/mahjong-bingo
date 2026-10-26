@@ -1,5 +1,6 @@
 import { analyze, exactWinProbability, economics, TILE_COUNT } from './math.mjs';
 import { createBodies, stepBodies } from './shuffle.mjs';
+import { loadLocalData, upsertRecord, saveLocalData, clearLocalData, validBoard } from './records.mjs';
 
 const $ = id => document.getElementById(id);
 const ui = Object.fromEntries(['draws','games','price','prize','bonus','double-replay','auto-place','appearance','seed','lock-seed','board','pool','tray','tray-section','status-title','status-detail','draw-counter','round-label','pool-count','seed-label','new-round','auto-draw','place-all','eventual','direct','replay-prob','package-win','fair-prize','net','net-note','ev-label','compute-state','estimate-note','bar-win','bar-replay','comparison-body','config-error','run-simulation','toast'].map(id => [id, $(id)]));
@@ -9,7 +10,7 @@ const images = [...['Man','Pin','Sou'].flatMap(suit => Array.from({ length: 9 },
 const money = value => `NT$ ${new Intl.NumberFormat('zh-TW', { maximumFractionDigits: 2, minimumFractionDigits: 2 }).format(value)}`;
 const percent = value => `${(value * 100).toFixed(2)}%`;
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
-let board = [...ids];
+let board = [];
 let deck = [];
 let roundSeed = '';
 let roundNumber = 0;
@@ -39,6 +40,86 @@ const placementAnimations = new Set();
 let isRunning = false;
 let runGeneration = 0;
 let runResult = null;
+let localData = {version:1,preferences:{},history:[]};
+let currentRecordId = null;
+let roundStartedAt = '';
+let roundPreferences = null;
+let recordTimer;
+const preferenceIds = ['draws','games','price','prize','bonus','double-replay','auto-place','no-shuffle','appearance','lock-seed','seed','run-mode','run-count','run-speed'];
+
+function readPreferences() {
+  return Object.fromEntries(preferenceIds.map(id => {
+    const input = $(id);
+    return [id, input.type === 'checkbox' ? input.checked : input.value];
+  }));
+}
+
+function restorePreferences(preferences) {
+  for (const id of preferenceIds) {
+    const input = $(id);
+    const value = preferences[id];
+    if (input.type === 'checkbox') {
+      if (typeof value === 'boolean') input.checked = value;
+    } else if (typeof value === 'string') {
+      if (input.tagName === 'SELECT' && ![...input.options].some(option => option.value === value)) continue;
+      input.value = value.slice(0, 64);
+      if (!input.checkValidity()) input.value = input.defaultValue;
+    }
+  }
+  $('run-count-field').hidden = $('run-mode').value === 'win';
+  $('run-count').disabled = $('run-mode').value === 'win';
+}
+
+function persistLocalData() {
+  let saved = false;
+  try { saved = saveLocalData(localStorage, localData); } catch { /* Storage access may be disabled. */ }
+  $('storage-status').textContent = saved ? '設定與最近 100 局只存於此瀏覽器。' : '此瀏覽器無法儲存本機紀錄。';
+  return saved;
+}
+
+function renderHistory() {
+  $('history-count').textContent = `${localData.history.length} 局`;
+  const fragment = document.createDocumentFragment();
+  const labels = {initial:'進行中',bonus:'補摸中',won:'中獎',lost:'未中獎',replay:'免費重來'};
+  for (const record of [...localData.history].reverse().slice(0, 10)) {
+    const row = document.createElement('div');
+    row.className = 'history-row';
+    const text = document.createElement('span');
+    const stamp = new Intl.DateTimeFormat('zh-TW',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(record.startedAt));
+    text.textContent = `${stamp}　${record.draws} 張　${labels[record.phase] || '進行中'}`;
+    const replay = document.createElement('button');
+    replay.type = 'button';
+    replay.className = 'text-button';
+    replay.dataset.recordId = record.id;
+    replay.textContent = '重現';
+    row.append(text, replay);
+    fragment.append(row);
+  }
+  if (!localData.history.length) {
+    const empty = document.createElement('p');
+    empty.className = 'field-note';
+    empty.textContent = '尚無紀錄';
+    fragment.append(empty);
+  }
+  $('history-list').replaceChildren(fragment);
+}
+
+function recordCurrentRound() {
+  clearTimeout(recordTimer);
+  if (!currentRecordId || !validBoard(board) || !['initial','bonus','won','lost','replay'].includes(phase)) return;
+  localData.history = upsertRecord(localData.history, {
+    id:currentRecordId,startedAt:roundStartedAt,seed:roundSeed,board:[...board],
+    draws:Number(roundPreferences?.draws || settings().draws),phase,selected:[...selected],placed:[...placed],
+    preferences:roundPreferences || readPreferences(),
+  });
+  persistLocalData();
+  renderHistory();
+}
+
+function scheduleRecord() {
+  clearTimeout(recordTimer);
+  recordTimer = setTimeout(recordCurrentRound, 150);
+}
 
 function settings() {
   return { draws: Number(ui.draws.value), games: Number(ui.games.value), price: Number(ui.price.value), prize: Number(ui.prize.value), bonus: Number(ui.bonus.value), doubleReplay: ui['double-replay'].checked };
@@ -207,6 +288,7 @@ function updateControls() {
   ui['place-all'].disabled = isRunning;
   $('reveal-all').disabled = isRunning;
   ui['auto-draw'].textContent = phase === 'bonus' ? `補摸 ${Math.max(0, limit - selected.length)} 張` : '隨機選滿';
+  scheduleRecord();
 }
 function status(title, detail) {
   ui['status-title'].textContent = title;
@@ -217,6 +299,7 @@ function finishRound(nextPhase, title, detail) {
   status(title, detail);
   ui['new-round'].textContent = nextPhase === 'replay' ? '↻ 免費重來' : '↻ 洗牌';
   updateControls();
+  recordCurrentRound();
 }
 function checkRound() {
   updateBoard();
@@ -465,9 +548,11 @@ async function startRun() {
   }
 }
 
-async function newRound({ reproduce = false, runner = false } = {}) {
+async function newRound({ reproduce = false, runner = false, replayRecord = null } = {}) {
   if (!runner && isRunning) stopRun();
   if (!validSettings()) { $('settings-form').reportValidity(); return; }
+  recordCurrentRound();
+  const previousBoard = [...board];
   generation += 1;
   for (const animation of placementAnimations) animation.cancel();
   cancelShuffle();
@@ -479,12 +564,21 @@ async function newRound({ reproduce = false, runner = false } = {}) {
   flightNodes = new Set();
   const fixed = !runner && ui['lock-seed'].checked;
   const requestedSeed = ui.seed.value.trim();
-  roundSeed = reproduce && roundSeed ? roundSeed : (fixed && requestedSeed ? requestedSeed : randomSeed());
+  roundSeed = replayRecord ? replayRecord.seed : (reproduce && roundSeed ? roundSeed : (fixed && requestedSeed ? requestedSeed : randomSeed()));
   ui.seed.value = roundSeed;
   try {
-    const nextDeck = await deckForSeed(roundSeed);
+    const [nextDeck, nextBoard] = await Promise.all([
+      deckForSeed(roundSeed),
+      deckForSeed(`${roundSeed}:board`),
+    ]);
     if (current !== generation) return;
     deck = nextDeck;
+    if (replayRecord && validBoard(replayRecord.board)) board = [...replayRecord.board];
+    else if (reproduce && validBoard(previousBoard)) board = previousBoard;
+    else board = $('no-shuffle').checked ? [...ids] : nextBoard;
+    currentRecordId = crypto.randomUUID();
+    roundStartedAt = new Date().toISOString();
+    roundPreferences = readPreferences();
     selected = [];
     placed = new Set();
     revealed = new Set();
@@ -493,7 +587,7 @@ async function newRound({ reproduce = false, runner = false } = {}) {
     activeTile = null;
     phase = 'shuffling';
     roundNumber += 1;
-    ui['round-label'].textContent = `第 ${roundNumber} 局${reproduce || fixed ? ' · 重現模式' : ''}`;
+    ui['round-label'].textContent = `第 ${roundNumber} 局${reproduce || fixed || replayRecord ? ' · 重現模式' : ''}`;
     ui['seed-label'].textContent = `種子 ${roundSeed.length > 18 ? `${roundSeed.slice(0, 12)}…` : roundSeed}`;
     ui['seed-label'].title = roundSeed;
     ui['new-round'].textContent = '↻ 洗牌';
@@ -681,7 +775,8 @@ ui['auto-place'].addEventListener('change', () => { if (isRunning) return; if (u
 ui.appearance.addEventListener('change', () => { renderBoard(); renderTray(); });
 ui['new-round'].addEventListener('click', () => newRound());
 $('replay-hand').addEventListener('click', () => newRound({ reproduce: true }));
-$('reset-board').addEventListener('click', async () => { board = await deckForSeed(randomSeed()); await newRound(); say('底盤已重新排列，這局重新開始。'); });
+$('reset-board').addEventListener('click', async () => { $('no-shuffle').checked = false; localData.preferences = readPreferences(); persistLocalData(); await newRound(); });
+$('no-shuffle').addEventListener('change', () => newRound());
 ui['auto-draw'].addEventListener('click', autoDraw);
 ui['place-all'].addEventListener('click', placeAll);
 $('reveal-all').addEventListener('click', () => { for (const id of selected) revealed.add(id); renderTray(); });
@@ -714,6 +809,40 @@ $('help-open').addEventListener('click', showHelp);
 $('sources-open').addEventListener('click', showHelp);
 $('help-close').addEventListener('click', () => $('help').close());
 $('help').addEventListener('click', event => { if (event.target === $('help')) { const r = $('help').getBoundingClientRect(); if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) $('help').close(); } });
+$('settings-form').addEventListener('change', () => {
+  if (!validSettings()) return;
+  localData.preferences = readPreferences();
+  persistLocalData();
+});
+$('history-list').addEventListener('click', event => {
+  const button = event.target.closest('[data-record-id]');
+  if (!button) return;
+  const record = localData.history.find(item => item.id === button.dataset.recordId);
+  if (!record) return;
+  if (isRunning) stopRun();
+  recordCurrentRound();
+  currentRecordId = null;
+  restorePreferences(record.preferences || {'draws':String(record.draws)});
+  localData.preferences = readPreferences();
+  persistLocalData();
+  updateAnalysis();
+  runSimulation();
+  newRound({reproduce:true,replayRecord:record});
+});
+$('clear-local').addEventListener('click', () => {
+  clearTimeout(recordTimer);
+  let cleared = false;
+  try { cleared = clearLocalData(localStorage); } catch { /* Storage access may be disabled. */ }
+  if (!cleared) { say('無法清除本機紀錄。'); return; }
+  localData = {version:1,preferences:{},history:[]};
+  currentRecordId = null;
+  renderHistory();
+  $('storage-status').textContent = '本機設定與紀錄已清除。';
+  say('本機紀錄已清除');
+});
+try { localData = loadLocalData(localStorage); } catch { /* Use in-memory defaults. */ }
+restorePreferences(localData.preferences);
+renderHistory();
 if (matchMedia('(max-width:700px)').matches) $('settings-details').open = false;
 function setTheme(theme) {
   document.documentElement.dataset.theme = theme;
@@ -723,7 +852,7 @@ function setTheme(theme) {
 }
 $('theme-toggle').addEventListener('click', () => setTheme(document.documentElement.dataset.theme === 'black' ? 'light' : 'black'));
 try { setTheme(localStorage.getItem('bingo-theme') || 'black'); } catch { setTheme('black'); }
-window.addEventListener('pagehide', () => { isRunning=false; cancelShuffle(); poolObserver.disconnect(); worker?.terminate(); clearTimeout(toastTimer); clearTimeout(simulationTimer); });
+window.addEventListener('pagehide', () => { recordCurrentRound(); isRunning=false; cancelShuffle(); poolObserver.disconnect(); worker?.terminate(); clearTimeout(toastTimer); clearTimeout(simulationTimer); clearTimeout(recordTimer); });
 updateAnalysis();
 newRound();
 runSimulation();
