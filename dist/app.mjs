@@ -789,6 +789,9 @@ ui['comparison-body'].addEventListener('click', event => {
   const row = event.target.closest('tr[data-draws]');
   if (!row) return;
   ui.draws.value = row.dataset.draws;
+  $('probability').close();
+  localData.preferences = readPreferences();
+  persistLocalData();
   updateAnalysis();
   newRound();
   if (matchMedia('(max-width:700px)').matches) $('table-area').scrollIntoView({ behavior: 'smooth' });
@@ -805,6 +808,13 @@ for (const id of ['bonus','double-replay']) ui[id].addEventListener('change', ()
 ui.seed.addEventListener('change', () => { if (ui['lock-seed'].checked) newRound(); });
 ui['lock-seed'].addEventListener('change', () => { if (ui['lock-seed'].checked) say('已固定種子；下一局會重現同一副牌。'); });
 const showHelp = () => { if (!$('help').open) $('help').showModal(); };
+$('probability-open').addEventListener('click', () => { if (!$('probability').open) $('probability').showModal(); });
+$('probability-close').addEventListener('click', () => $('probability').close());
+$('probability').addEventListener('click', event => {
+  if (event.target !== $('probability')) return;
+  const rect = $('probability').getBoundingClientRect();
+  if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) $('probability').close();
+});
 $('help-open').addEventListener('click', showHelp);
 $('sources-open').addEventListener('click', showHelp);
 $('help-close').addEventListener('click', () => $('help').close());

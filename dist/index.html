@@ -9,7 +9,7 @@
   <script type="module" src="app.mjs"></script>
 </head>
 <body>
-  <header class="topbar"><a class="brand" href="#"><span class="brand-mark">發</span><span>麻將賓果</span></a><nav><a href="#table-area">牌桌</a><a href="#analysis">機率</a><button class="text-button" id="help-open">規則</button><button class="theme-toggle" id="theme-toggle" aria-pressed="true">背景：黑色</button></nav></header>
+  <header class="topbar"><a class="brand" href="#"><span class="brand-mark">發</span><span>麻將賓果</span></a><nav><a href="#table-area">牌桌</a><button class="text-button" id="probability-open" aria-haspopup="dialog" aria-controls="probability">機率</button><button class="text-button" id="help-open">規則</button><button class="theme-toggle" id="theme-toggle" aria-pressed="true">背景：黑色</button></nav></header>
   <main>
     <div class="workspace">
       <aside class="settings panel"><details open id="settings-details"><summary><h2>這局怎麼玩</h2><span>調整設定</span></summary><div class="settings-inner">
@@ -45,9 +45,9 @@
         <details class="formula"><summary>數字怎麼算？</summary><p>直接連線率 w：以 14 條線的包含排除原理精確計算，不將多條線重複相加。</p><p>單次重來率 r：以 30 萬次隨機摸牌估計；單聽補中率以超幾何公式計算。先判斷直接連線，再判斷重來。</p><p>每付費局最終中獎率 q = w ÷ (1 − r)。假設每次重來重新洗牌、規則相同，重來次數無上限。</p><p>淨期望值 = 局數 × q × 獎品價值 − 整組價格。每局中獎領一份，不按連線數加倍；買的每局均玩完。</p><p>整組至少中一次 = 1 − (1 − q)<sup>局數</sup>。期望值為長期平均，不保證單次結果。</p></details>
       </aside>
     </div>
-    <section class="comparison panel"><div class="comparison-heading"><h2>10～15 張比較</h2><span>點張數切換</span></div><div class="table-scroll"><table><thead><tr><th>摸牌張數</th><th>直接中獎率 <span>精確</span></th><th>免費重來率 <span>估計</span></th><th>最終中獎率 <span>估計</span></th><th>整組淨期望值 <span>估計</span></th></tr></thead><tbody id="comparison-body"></tbody></table></div></section>
     <footer><button id="sources-open" class="text-button">規則與參考</button></footer>
   </main>
+  <dialog id="probability" class="probability-dialog" aria-labelledby="probability-title"><div class="dialog-heading"><h2 id="probability-title">機率</h2><button class="icon-button" id="probability-close" aria-label="關閉機率">×</button></div><p class="field-note">點張數切換設定</p><div class="comparison"><div class="table-scroll"><table><thead><tr><th>摸牌張數</th><th>直接中獎率 <span>精確</span></th><th>免費重來率 <span>估計</span></th><th>最終中獎率 <span>估計</span></th><th>整組淨期望值 <span>估計</span></th></tr></thead><tbody id="comparison-body"></tbody></table></div></div></dialog>
   <dialog id="help"><div class="dialog-heading"><h2>規則</h2><button class="icon-button" id="help-close" aria-label="關閉說明">×</button></div><p>底盤有 36 張不重複牌。每局從洗好的牌背選你設定的張數（1～36 張；夜市常見 10～15 張），放進底盤相同的牌面；橫、直各 6 條，加上 2 條對角線，共 14 條中任一條湊滿 6 張就中獎。</p><ol><li>點擊牌背摸牌。手牌先蓋著放到下方，點擊翻開後拖到對應位置。勾選「自動擺牌」可省略翻牌與拖拉。</li><li>摸滿後，先判斷是否中獎；沒中再看聽牌。差同一張才能成兩條線，仍算聽一張。</li><li>預設聽兩張以上免費重來；單聽可補摸 5 張。補中只重來，補不中結束。</li><li>「洗牌開新局」會產生全新牌序；「重現這一副」重用本局種子。底盤預設每局隨機；勾選「不打亂」才維持固定順序。重現會保留原底盤與牌序。</li></ol><p>這是規則可調的機率演示；原對話採用的雙聽重來屬本實驗設定，不代表每家夜市規則。</p><p>參考：<a href="https://play.google.com/store/apps/details?id=com.Sapp.BingoMj&hl=zh_TW" target="_blank" rel="noopener">麻將賓果開發者玩法說明</a>、<a href="https://www.nownews.com/news/5945090" target="_blank" rel="noopener">夜市補摸重來玩法報導</a>、<a href="https://github.com/anthropics/skills/blob/main/skills/frontend-design/SKILL.md" target="_blank" rel="noopener">frontend-design skill</a>。</p></dialog>
   <div id="toast" class="toast" role="status"></div>
 </body></html>
