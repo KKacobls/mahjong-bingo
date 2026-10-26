@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-Hant" data-theme="black">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#154d43">
+  <meta name="description" content="在牌桌上探索隨機。36 張麻將賓果、手動拖拉、連線機率與期望值計算。">
+  <title>麻將賓果</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.mjs"></script>
+</head>
+<body>
+  <header class="topbar"><a class="brand" href="#"><span class="brand-mark">發</span><span>麻將賓果</span></a><nav><a href="#table-area">牌桌</a><a href="#analysis">機率</a><button class="text-button" id="help-open">規則</button><button class="theme-toggle" id="theme-toggle" aria-pressed="true">背景：黑色</button></nav></header>
+  <main>
+    <div class="workspace">
+      <aside class="settings panel"><details open id="settings-details"><summary><h2>這局怎麼玩</h2><span>調整設定</span></summary><div class="settings-inner">
+        <form id="settings-form">
+          <label for="draws">每局摸幾張</label><div class="unit-input"><input id="draws" type="number" min="1" max="36" value="15" step="1" required><span>張</span></div>
+          <div class="form-pair"><div><label for="games">購買局數</label><div class="unit-input"><input id="games" type="number" min="1" max="10000" step="1" value="6" required><span>局</span></div></div><div><label for="price">整組價格</label><div class="unit-input"><input id="price" type="number" min="0" max="10000000" step="1" value="100" required><span>元</span></div></div></div>
+          <label for="prize">一份獎品的價值</label><div class="unit-input"><span>NT$</span><input id="prize" type="number" min="0" max="10000000" step="1" value="300" required></div>
+          <div class="settings-divider"></div><h3>擺牌方式</h3>
+          <label class="check-row"><input id="auto-place" type="checkbox"><span><strong>自動擺牌</strong><small>不勾選時，翻牌後自己拖到對應位置</small></span></label>
+          <h3>免費重來規則</h3><label class="check-row"><input id="double-replay" type="checkbox" checked><span><strong>聽兩張以上，直接重來</strong><small>計算不同缺牌，不重複計同一張</small></span></label>
+          <label for="bonus">聽牌後補摸</label><div class="unit-input"><input id="bonus" type="number" min="0" max="35" value="5" step="1" required><span>張</span></div><p class="field-note">補中只免費重來，不直接領獎。</p>
+          <div class="settings-divider"></div><h3>自動跑牌</h3><label for="run-mode">停止條件</label><select id="run-mode"><option value="rounds">跑指定局數</option><option value="win">跑到中獎</option></select><div id="run-count-field"><label for="run-count">付費局數</label><div class="unit-input"><input id="run-count" type="number" min="1" max="100000" value="15" step="1"><span>局</span></div></div><label for="run-speed">擺牌速度</label><select id="run-speed"><option value="normal">逐張擺牌</option><option value="fast">快速擺牌</option></select><div class="runner-actions"><button type="button" id="run-start" class="secondary full">開始跑牌</button><button type="button" id="run-stop" class="secondary" hidden>停止</button></div><p id="run-summary" class="run-summary" role="status"></p>
+          <details class="advanced"><summary>進階設定與重現</summary><label for="appearance">牌面樣式</label><select id="appearance"><option value="mahjong">麻將牌</option><option value="numbers">簡潔數字</option></select><label class="check-row"><input id="lock-seed" type="checkbox"><span>固定種子，重現同一副牌</span></label><label for="seed">洗牌種子</label><input id="seed" type="text" maxlength="64" value=""><button type="button" id="reset-board" class="secondary full">重新排列對獎底盤</button><p class="field-note">只改底盤位置，會開新局；不影響理論機率。</p></details>
+        </form><p id="config-error" class="error" role="alert"></p>
+      </div></details></aside>
+      <section class="table-panel" id="table-area" aria-labelledby="table-title">
+        <div class="table-heading"><div><span class="round-label" id="round-label">第 1 局</span><h2 id="table-title">選牌</h2></div><div class="table-actions"><button id="run-stop-table" class="felt-button" hidden>停止跑牌</button><button id="new-round" class="felt-button">↻ 洗牌</button></div></div>
+        <div class="pool-heading"><h3>牌池 <span id="pool-count">36 張</span></h3><button id="auto-draw" class="felt-link">隨機選滿</button></div>
+        <div id="pool" class="pool" aria-label="隨機牌背"></div>
+        <div class="board-wrap"><div class="axis-top" aria-hidden="true"><span>A</span><span>B</span><span>C</span><span>D</span><span>E</span><span>F</span></div><div class="board" id="board" aria-label="6 乘 6 對獎底盤"></div></div>
+        <div class="table-legend"><span><i class="legend-dot filled"></i> 已放置</span><span><i class="legend-dot waiting"></i> 差一張</span><span><i class="legend-dot winning"></i> 已連線</span><button id="place-all" class="felt-link" hidden>幫我放好</button></div>
+        <div class="status-strip" id="round-status" role="status" aria-live="polite"><div><strong id="status-title">洗牌中</strong><span id="status-detail"></span></div><span id="draw-counter" class="draw-counter">0 / 15</span></div>
+        <div id="tray-section" class="tray-section"><div class="pool-heading"><h3>手牌</h3><button id="reveal-all" class="felt-link">全部翻開</button></div><div id="tray" class="tray"></div></div>
+        <div class="table-bottom"><span id="seed-label">本局隨機種子</span><button class="felt-link" id="replay-hand">重現這一副</button></div>
+      </section>
+      <aside class="analytics panel" id="analysis"><div class="analysis-heading"><h2>機率與期望值</h2><span id="compute-state" class="compute-badge">計算中</span></div>
+        <div class="main-probability"><span>每付費局最終中獎率</span><strong id="eventual">—<small>%</small></strong><p>含免費重來，直到中獎或結束</p></div>
+        <div class="prob-row"><span>原始摸牌直接連線 <small>精確</small></span><strong id="direct">—</strong></div><div class="prob-row"><span>單次免費重來率 <small>估計</small></span><strong id="replay-prob">—</strong></div><div class="prob-bar"><i id="bar-win"></i><i id="bar-replay"></i></div><div class="bar-key"><span><i></i>中獎</span><span><i></i>重來</span><span><i></i>結束</span></div>
+        <div class="ev-box"><span id="ev-label">6 局的淨期望值</span><strong id="net">—</strong><p id="net-note">獎品期望價值 − 購買成本</p></div><div class="prob-row"><span>整組至少中一次</span><strong id="package-win">—</strong></div><div class="prob-row"><span>獎品損益兩平價值</span><strong id="fair-prize">—</strong></div><p class="estimate-note" id="estimate-note">正在瀏覽器背景模擬 300,000 次。牌桌可照常操作。</p>
+        <button id="run-simulation" class="secondary full">↻ 再跑 30 萬次驗證</button>
+        <details class="formula"><summary>數字怎麼算？</summary><p>直接連線率 w：以 14 條線的包含排除原理精確計算，不將多條線重複相加。</p><p>單次重來率 r：以 30 萬次隨機摸牌估計；單聽補中率以超幾何公式計算。先判斷直接連線，再判斷重來。</p><p>每付費局最終中獎率 q = w ÷ (1 − r)。假設每次重來重新洗牌、規則相同，重來次數無上限。</p><p>淨期望值 = 局數 × q × 獎品價值 − 整組價格。每局中獎領一份，不按連線數加倍；買的每局均玩完。</p><p>整組至少中一次 = 1 − (1 − q)<sup>局數</sup>。期望值為長期平均，不保證單次結果。</p></details>
+      </aside>
+    </div>
+    <section class="comparison panel"><div class="comparison-heading"><h2>10～15 張比較</h2><span>點張數切換</span></div><div class="table-scroll"><table><thead><tr><th>摸牌張數</th><th>直接中獎率 <span>精確</span></th><th>免費重來率 <span>估計</span></th><th>最終中獎率 <span>估計</span></th><th>整組淨期望值 <span>估計</span></th></tr></thead><tbody id="comparison-body"></tbody></table></div></section>
+    <footer><button id="sources-open" class="text-button">規則與參考</button></footer>
+  </main>
+  <dialog id="help"><div class="dialog-heading"><h2>規則</h2><button class="icon-button" id="help-close" aria-label="關閉說明">×</button></div><p>底盤有 36 張不重複牌。每局從洗好的牌背選你設定的張數（1～36 張；夜市常見 10～15 張），放進底盤相同的牌面；橫、直各 6 條，加上 2 條對角線，共 14 條中任一條湊滿 6 張就中獎。</p><ol><li>點擊牌背摸牌。手牌先蓋著放到下方，點擊翻開後拖到對應位置。勾選「自動擺牌」可省略翻牌與拖拉。</li><li>摸滿後，先判斷是否中獎；沒中再看聽牌。差同一張才能成兩條線，仍算聽一張。</li><li>預設聽兩張以上免費重來；單聽可補摸 5 張。補中只重來，補不中結束。</li><li>「洗牌開新局」會產生全新牌序；「重現這一副」重用本局種子。底盤只會在你按下重新排列時改變。</li></ol><p>這是規則可調的機率演示；原對話採用的雙聽重來屬本實驗設定，不代表每家夜市規則。</p><p>參考：<a href="https://play.google.com/store/apps/details?id=com.Sapp.BingoMj&hl=zh_TW" target="_blank" rel="noopener">麻將賓果開發者玩法說明</a>、<a href="https://www.nownews.com/news/5945090" target="_blank" rel="noopener">夜市補摸重來玩法報導</a>、<a href="https://github.com/anthropics/skills/blob/main/skills/frontend-design/SKILL.md" target="_blank" rel="noopener">frontend-design skill</a>。</p></dialog>
+  <div id="toast" class="toast" role="status"></div>
+</body></html>
