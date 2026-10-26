@@ -11,7 +11,7 @@ const stripImports = source => source.replace(/^import .*;\r?\n/gm,'');
 const mathInline = math.replace(/^export /gm,'');
 const shuffleInline = shuffle.replace(/^export /gm,'');
 const workerInline = `${mathInline}\n${stripImports(worker)}`;
-const tileFiles = [...['Man','Pin','Sou'].flatMap(suit=>Array.from({length:9},(_,i)=>`${suit}${i+1}.png`)),...['Ton','Nan','Shaa','Pei','Haku','Hatsu','Chun'].map(name=>`${name}.png`)];
+const tileFiles = [...['Man','Pin','Sou'].flatMap(suit=>Array.from({length:9},(_,i)=>`${suit}${i+1}.png`)),...['Ton','Nan','Shaa','Pei','Haku','Hatsu','Chun','Man5-Dora','Sou5-Dora'].map(name=>`${name}.png`)];
 const assets = Object.fromEntries(await Promise.all(tileFiles.map(async name=>[`tiles/${name}`,`data:image/png;base64,${(await readFile(path.join(dist,'assets/tiles',name))).toString('base64')}`])));
 const appInline = stripImports(app).replace('element.src = `assets/${images[id]}`;','element.src = offlineAssets[images[id]];').replace("new Worker(new URL('./worker.mjs', import.meta.url), { type: 'module' })",'new Worker(offlineWorkerUrl)');
 const script = `const offlineAssets=${JSON.stringify(assets)};\nconst offlineWorkerUrl=URL.createObjectURL(new Blob([${JSON.stringify(workerInline)}],{type:'text/javascript'}));\n${mathInline}\n${shuffleInline}\n${appInline}`;

@@ -4,8 +4,8 @@ import { createBodies, stepBodies } from './shuffle.mjs';
 const $ = id => document.getElementById(id);
 const ui = Object.fromEntries(['draws','games','price','prize','bonus','double-replay','auto-place','appearance','seed','lock-seed','board','pool','tray','tray-section','status-title','status-detail','draw-counter','round-label','pool-count','seed-label','new-round','auto-draw','place-all','eventual','direct','replay-prob','package-win','fair-prize','net','net-note','ev-label','compute-state','estimate-note','bar-win','bar-replay','comparison-body','config-error','run-simulation','toast'].map(id => [id, $(id)]));
 const ids = Array.from({ length: TILE_COUNT }, (_, i) => i);
-const names = [...['萬','筒','索'].flatMap(suit => Array.from({ length: 9 }, (_, i) => `${i + 1}${suit}`)), '東','南','西','北','白','發','中','5萬②','5筒②'];
-const images = [...['Man','Pin','Sou'].flatMap(suit => Array.from({ length: 9 }, (_, i) => `tiles/${suit}${i + 1}.png`)), ...['Ton','Nan','Shaa','Pei','Haku','Hatsu','Chun','Man5','Pin5'].map(name => `tiles/${name}.png`)];
+const names = [...['萬','筒','索'].flatMap(suit => Array.from({ length: 9 }, (_, i) => `${i + 1}${suit}`)), '東','南','西','北','白','發','中','紅五萬','紅五條'];
+const images = [...['Man','Pin','Sou'].flatMap(suit => Array.from({ length: 9 }, (_, i) => `tiles/${suit}${i + 1}.png`)), ...['Ton','Nan','Shaa','Pei','Haku','Hatsu','Chun','Man5-Dora','Sou5-Dora'].map(name => `tiles/${name}.png`)];
 const money = value => `NT$ ${new Intl.NumberFormat('zh-TW', { maximumFractionDigits: 2, minimumFractionDigits: 2 }).format(value)}`;
 const percent = value => `${(value * 100).toFixed(2)}%`;
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -81,15 +81,6 @@ function face(id) {
     element.src = `assets/${images[id]}`;
     element.alt = names[id];
     element.draggable = false;
-  }
-  if (id >= 34 && ui.appearance.value === 'mahjong') {
-    const wrapper = document.createElement('span');
-    wrapper.className = 'duplicate-face';
-    const badge = document.createElement('span');
-    badge.className = 'copy-badge';
-    badge.textContent = '②';
-    wrapper.append(element, badge);
-    return wrapper;
   }
   return element;
 }
