@@ -110,6 +110,7 @@ function renderLiveStats() {
   $('live-last-win').textContent=t.lastWin?`最近：第 ${t.lastWin.round} 局中獎，當時共花 ${money(t.lastWin.spent)}`:'尚未中獎';
   const stateLabels={loading:'準備中',shuffling:'洗牌中',initial:'選牌中',bonus:'補摸中',won:'中獎',lost:'未中獎',replay:'免費重來'};
   $('live-state').textContent=waitingForPayment?'等候付費':(!roundAccounted&&!canStartPaidRound()?'待付費':stateLabels[phase]||'待選牌');
+  $('mobile-credits').textContent=`剩餘 ${t.credits} 局${t.freeAvailable?' ＋ 免費重來':''}`;
   $('live-mini-values').textContent=`完成 ${t.completed} 局 · 中獎 ${t.wins} 次 · 實際 ${rate}`;
   $('live-run-progress').textContent=runResult?`本輪完成 ${runResult.rounds} 局${runResult.mode==='rounds'?`，付費 ${runResult.paid} / ${runResult.target} 局`:''}${waitingForPayment?'；局數用完，付費後繼續':''}`:'';
   drawSpendingCurve(t);
@@ -943,21 +944,42 @@ $('history-list').addEventListener('click', event => {
   if($('probability').open)runSimulation();
   newRound({reproduce:true,replayRecord:record});
 });
-$('clear-local').addEventListener('click', () => {
-  if(isRunning)stopRun();
+function resetGame(all = false) {
+  if (isRunning) stopRun();
   clearTimeout(recordTimer);
-  let cleared = false;
-  try { cleared = clearLocalData(localStorage); } catch { /* Storage access may be disabled. */ }
-  if (!cleared) { say('無法清除本機紀錄。'); return; }
-  localData = {version:1,preferences:{},history:[],live:emptyLiveStats()};
   currentRecordId = null;
-  roundAccounted=false;
-  roundOutcomeRecorded=false;
+  runResult = null;
+  roundAccounted = false;
+  roundOutcomeRecorded = false;
+  localData.live = emptyLiveStats();
+  if (all) {
+    try { clearLocalData(localStorage); } catch { /* In-memory reset still works. */ }
+    localData = {version:1,preferences:{},history:[],live:emptyLiveStats()};
+    $('settings-form').reset();
+    $('billing-form').reset();
+    $('run-count-field').hidden = false;
+    roundNumber = 0;
+    stats = null;
+    clearTimeout(simulationTimer);
+    worker?.terminate();
+    worker = null;
+    ui['comparison-body'].replaceChildren();
+    ui['compute-state'].textContent = '尚未計算';
+    ui['run-simulation'].disabled = false;
+    setTheme('black');
+  }
+  localData.preferences = readPreferences();
+  persistLocalData();
   renderHistory();
-  $('storage-status').textContent = '本機設定與紀錄已清除。';
-  say('本機紀錄已清除');
+  updateAnalysis();
   newRound();
-});
+  say(all ? '已全部重置' : '金額、剩餘局數與統計已歸零');
+}
+$('reset-money').addEventListener('click', () => resetGame());
+$('reset-all').addEventListener('click', () => resetGame(true));
+$('reset-money-mobile').addEventListener('click', () => resetGame());
+$('reset-all-mobile').addEventListener('click', () => resetGame(true));
+$('clear-local').addEventListener('click', () => resetGame(true));
 try { localData = loadLocalData(localStorage); } catch { /* Use in-memory defaults. */ }
 localData.live=normalizeLiveStats(localData.live);
 restorePreferences(localData.preferences);
