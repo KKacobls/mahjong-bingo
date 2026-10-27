@@ -1,4 +1,4 @@
-import { analyze, economics, conditionalWinProbability, bonusProbability, TILE_COUNT } from './math.mjs';
+import { analyze, economics, TILE_COUNT } from './math.mjs';
 import { createBodies, stepBodies } from './shuffle.mjs';
 import { loadLocalData, upsertRecord, saveLocalData, clearLocalData, validBoard } from './records.mjs';
 import { emptyLiveStats, normalizeLiveStats, purchaseGames, beginPlayedRound, completePlayedRound } from './live.mjs';
@@ -51,8 +51,6 @@ let roundOutcomeRecorded = false;
 let waitingForPayment = false;
 let paymentResume = null;
 let curveKey = '';
-let chanceKey = '';
-let chanceValue = 0;
 const preferenceIds = ['draws','games','price','bonus','double-replay','auto-place','no-shuffle','appearance','lock-seed','seed','run-mode','run-count','run-speed'];
 
 function liveTotals() { localData.live ??= emptyLiveStats(); return localData.live; }
@@ -112,28 +110,7 @@ function renderLiveStats() {
   $('live-last-win').textContent=t.lastWin?`最近：第 ${t.lastWin.round} 局中獎，當時共花 ${money(t.lastWin.spent)}`:'尚未中獎';
   const stateLabels={loading:'準備中',shuffling:'洗牌中',initial:'選牌中',bonus:'補摸中',won:'中獎',lost:'未中獎',replay:'免費重來'};
   $('live-state').textContent=waitingForPayment?'等候付費':(!roundAccounted&&!canStartPaidRound()?'待付費':stateLabels[phase]||'待選牌');
-  const draws=Number(roundPreferences?.draws || config.draws);
-  const known=[...revealed].map(id=>board.indexOf(id)).filter(p=>p>=0).sort((a,b)=>a-b);
-  let label='本局連線機會';
-  let value='—';
-  if(phase==='won'){label='本局結果';value='已中獎';}
-  else if(phase==='lost'){label='本局結果';value='未中獎';}
-  else if(phase==='replay'){label='本局結果';value='免費重來';}
-  else if(phase==='bonus') {
-    label='補中重來機會';
-    const knownBonus=selected.slice(draws).filter(id=>revealed.has(id));
-    const hit=knownBonus.some(id=>baseTargets.includes(id));
-    value=percent(hit?1:bonusProbability(TILE_COUNT-draws-knownBonus.length,baseTargets.length,Math.max(0,bonusCount-knownBonus.length)));
-  } else if(validBoard(board)) {
-    const key=`${draws}:${known.join(',')}`;
-    if(key!==chanceKey){chanceValue=conditionalWinProbability(known,draws);chanceKey=key;}
-    value=percent(chanceValue);
-  }
-  $('live-chance-label').textContent=label;
-  setLiveValue('live-chance',value);
-  $('live-flips').textContent=`已翻 ${revealed.size} / ${draws+bonusCount} 張`;
-  $('live-progress-bar').style.width=`${Math.min(100,revealed.size/(draws+bonusCount)*100)}%`;
-  $('live-mini-values').textContent=`完成 ${t.completed} 局 · 中獎 ${t.wins} 次 · 實際 ${rate}｜本局 ${value}`;
+  $('live-mini-values').textContent=`完成 ${t.completed} 局 · 中獎 ${t.wins} 次 · 實際 ${rate}`;
   $('live-run-progress').textContent=runResult?`本輪完成 ${runResult.rounds} 局${runResult.mode==='rounds'?`，付費 ${runResult.paid} / ${runResult.target} 局`:''}${waitingForPayment?'；局數用完，付費後繼續':''}`:'';
   drawSpendingCurve(t);
 }
