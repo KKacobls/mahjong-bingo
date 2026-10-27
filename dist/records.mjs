@@ -17,6 +17,7 @@ export function loadLocalData(storage) {
       version:1,
       preferences: parsed.preferences && typeof parsed.preferences === 'object' && !Array.isArray(parsed.preferences) ? parsed.preferences : {},
       history: Array.isArray(parsed.history) ? parsed.history.filter(validRecord).slice(-HISTORY_LIMIT) : [],
+      ...(parsed.live && typeof parsed.live==='object' ? {live:parsed.live} : {}),
     };
   } catch { return {version:1,preferences:{},history:[]}; }
 }

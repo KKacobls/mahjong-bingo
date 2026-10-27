@@ -54,6 +54,53 @@ export function exactWinProbability(draws) {
   return Math.max(0, Math.min(1, coefficients.reduce((sum, coefficient, size) => sum + coefficient * combination(TILE_COUNT - size, draws - size), 0) / combination(TILE_COUNT, draws)));
 }
 
+let conditionalMasks;
+function bitCount(value) {
+  value -= (value >>> 1) & 0x55555555;
+  value = (value & 0x33333333) + ((value >>> 2) & 0x33333333);
+  return (((value + (value >>> 4)) & 0x0F0F0F0F) * 0x01010101) >>> 24;
+}
+
+export function conditionalWinProbability(knownPositions, draws) {
+  const known=[...new Set(knownPositions)];
+  if (!Number.isInteger(draws) || draws<known.length || draws>TILE_COUNT || known.some(p=>!Number.isInteger(p)||p<0||p>=TILE_COUNT)) return 0;
+  if (analyze(known).complete.length) return 1;
+  const left=draws-known.length;
+  if (!left) return 0;
+  if (!known.length) return exactWinProbability(draws);
+  if (!conditionalMasks) {
+    const size=1<<LINES.length;
+    const low=new Uint32Array(size);
+    const high=new Uint32Array(size);
+    const signs=new Int8Array(size);
+    signs[0]=-1;
+    const lineLow=LINES.map(line=>line.reduce((mask,p)=>p<32?mask|(1<<p):mask,0));
+    const lineHigh=LINES.map(line=>line.reduce((mask,p)=>p>=32?mask|(1<<(p-32)):mask,0));
+    for(let subset=1;subset<size;subset+=1) {
+      const bit=subset&-subset;
+      const previous=subset^bit;
+      const index=Math.log2(bit);
+      low[subset]=low[previous]|lineLow[index];
+      high[subset]=high[previous]|lineHigh[index];
+      signs[subset]=-signs[previous];
+    }
+    conditionalMasks={low,high,signs};
+  }
+  let knownLow=0;
+  let knownHigh=0;
+  for(const p of known) { if(p<32)knownLow|=1<<p;else knownHigh|=1<<(p-32); }
+  const counts=new Int32Array(TILE_COUNT+1);
+  const {low,high,signs}=conditionalMasks;
+  for(let subset=1;subset<low.length;subset+=1) counts[bitCount(low[subset]&~knownLow)+bitCount(high[subset]&~knownHigh)]+=signs[subset];
+  let probability=0;
+  let weight=1;
+  for(let size=0;size<=left;size+=1) {
+    if(size>0)weight*= (left-size+1)/(TILE_COUNT-known.length-size+1);
+    probability+=counts[size]*weight;
+  }
+  return Math.max(0,Math.min(1,probability));
+}
+
 export function economics({ win, replay, games, price, prize }) {
   const eventual = Math.min(1, win / (1 - replay));
   return {

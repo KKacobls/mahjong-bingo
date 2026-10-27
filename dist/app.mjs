@@ -1,9 +1,10 @@
-import { analyze, exactWinProbability, economics, TILE_COUNT } from './math.mjs';
+import { analyze, economics, conditionalWinProbability, bonusProbability, TILE_COUNT } from './math.mjs';
 import { createBodies, stepBodies } from './shuffle.mjs';
 import { loadLocalData, upsertRecord, saveLocalData, clearLocalData, validBoard } from './records.mjs';
+import { emptyLiveStats, normalizeLiveStats, purchaseGames, beginPlayedRound, completePlayedRound } from './live.mjs';
 
 const $ = id => document.getElementById(id);
-const ui = Object.fromEntries(['draws','games','price','prize','bonus','double-replay','auto-place','appearance','seed','lock-seed','board','pool','tray','tray-section','status-title','status-detail','draw-counter','round-label','pool-count','seed-label','new-round','auto-draw','place-all','eventual','direct','replay-prob','package-win','fair-prize','net','net-note','ev-label','compute-state','estimate-note','bar-win','bar-replay','comparison-body','config-error','run-simulation','toast'].map(id => [id, $(id)]));
+const ui = Object.fromEntries(['draws','games','price','bonus','double-replay','auto-place','appearance','seed','lock-seed','board','pool','tray','tray-section','status-title','status-detail','draw-counter','round-label','pool-count','seed-label','new-round','auto-draw','place-all','compute-state','comparison-body','config-error','run-simulation','toast'].map(id => [id, $(id)]));
 const ids = Array.from({ length: TILE_COUNT }, (_, i) => i);
 const names = [...['萬','筒','索'].flatMap(suit => Array.from({ length: 9 }, (_, i) => `${i + 1}${suit}`)), '東','南','西','北','白','發','中','紅五萬','紅五條'];
 const images = [...['Man','Pin','Sou'].flatMap(suit => Array.from({ length: 9 }, (_, i) => `tiles/${suit}${i + 1}.png`)), ...['Ton','Nan','Shaa','Pei','Haku','Hatsu','Chun','Man5-Dora','Sou5-Dora'].map(name => `tiles/${name}.png`)];
@@ -45,7 +46,109 @@ let currentRecordId = null;
 let roundStartedAt = '';
 let roundPreferences = null;
 let recordTimer;
-const preferenceIds = ['draws','games','price','prize','bonus','double-replay','auto-place','no-shuffle','appearance','lock-seed','seed','run-mode','run-count','run-speed'];
+let roundAccounted = false;
+let roundOutcomeRecorded = false;
+let waitingForPayment = false;
+let paymentResume = null;
+let curveKey = '';
+let chanceKey = '';
+let chanceValue = 0;
+const preferenceIds = ['draws','games','price','bonus','double-replay','auto-place','no-shuffle','appearance','lock-seed','seed','run-mode','run-count','run-speed'];
+
+function liveTotals() { localData.live ??= emptyLiveStats(); return localData.live; }
+function canStartPaidRound() { const t=liveTotals(); return t.freeAvailable || t.credits>0; }
+function setLiveValue(id,value) {
+  const element=$(id);
+  const text=String(value);
+  if (!element || element.textContent===text) return;
+  element.textContent=text;
+  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) element.animate([{opacity:.35,transform:'translateY(3px)'},{opacity:1,transform:'translateY(0)'}],{duration:180});
+}
+
+function drawSpendingCurve(t) {
+  const key=`${t.completed}:${t.spent}:${t.points.length}`;
+  if (key===curveKey) return;
+  curveKey=key;
+  const svg=$('live-curve');
+  const ns='http://www.w3.org/2000/svg';
+  const make=(tag,attributes,text)=>{
+    const node=document.createElementNS(ns,tag);
+    for(const [name,value] of Object.entries(attributes)) node.setAttribute(name,String(value));
+    if(text!==undefined)node.textContent=text;
+    return node;
+  };
+  const points=t.points.length?t.points:[{round:0,spent:0}];
+  const minX=points[0].round;
+  const maxX=Math.max(minX+1,t.completed);
+  const maxY=Math.max(1,t.spent);
+  const x=n=>36+(n-minX)/(maxX-minX)*232;
+  const y=n=>114-n/maxY*92;
+  const fragment=document.createDocumentFragment();
+  fragment.append(make('path',{d:'M36 18V114H270',fill:'none',stroke:'currentColor',opacity:'.25'}));
+  fragment.append(make('text',{x:1,y:23},Math.round(maxY).toLocaleString('zh-TW')));
+  fragment.append(make('text',{x:20,y:117},'0'));
+  fragment.append(make('text',{x:36,y:136},String(minX)));
+  fragment.append(make('text',{x:268,y:136,'text-anchor':'end'},`${t.completed} 局`));
+  let path=`M${x(points[0].round)} ${y(points[0].spent)}`;
+  for(const point of points.slice(1))path+=`H${x(point.round)}V${y(point.spent)}`;
+  fragment.append(make('path',{d:path,fill:'none',stroke:'#c6aa72','stroke-width':2.5,'stroke-linejoin':'round'}));
+  for(const point of points.filter(p=>p.win)) {
+    const dot=make('circle',{cx:x(point.round),cy:y(point.spent),r:4,fill:'#a8cc87',stroke:'var(--paper)','stroke-width':1.5});
+    dot.append(make('title',{},`第 ${point.round} 局中獎，累計花費 ${money(point.spent)}`));
+    fragment.append(dot);
+  }
+  svg.replaceChildren(fragment);
+}
+
+function renderLiveStats() {
+  const t=liveTotals();
+  const config=settings();
+  const rate=t.completed?percent(t.wins/t.completed):'—';
+  setLiveValue('live-rate',rate);
+  setLiveValue('live-rate-detail',`${t.wins} 中獎 / ${t.completed} 完成`);
+  for(const [id,value] of Object.entries({'live-rounds':t.completed,'live-wins':t.wins,'live-paid':t.paid,'live-replays':t.replays,'live-credits':t.credits,'live-spent':money(t.spent),'live-average':t.wins?money(t.spent/t.wins):'尚未中獎'}))setLiveValue(id,value);
+  $('buy-games').textContent=`付費購買 ${config.games} 局 · ${money(config.price)}`;
+  $('buy-games-mini').textContent=t.credits||t.freeAvailable?`續買 ${config.games} 局`:`付費 ${config.games} 局／${config.price} 元`;
+  $('live-last-win').textContent=t.lastWin?`最近：第 ${t.lastWin.round} 局中獎，當時共花 ${money(t.lastWin.spent)}`:'尚未中獎';
+  const stateLabels={loading:'準備中',shuffling:'洗牌中',initial:'選牌中',bonus:'補摸中',won:'中獎',lost:'未中獎',replay:'免費重來'};
+  $('live-state').textContent=waitingForPayment?'等候付費':(!roundAccounted&&!canStartPaidRound()?'待付費':stateLabels[phase]||'待選牌');
+  const draws=Number(roundPreferences?.draws || config.draws);
+  const known=[...revealed].map(id=>board.indexOf(id)).filter(p=>p>=0).sort((a,b)=>a-b);
+  let label='本局連線機會';
+  let value='—';
+  if(phase==='won'){label='本局結果';value='已中獎';}
+  else if(phase==='lost'){label='本局結果';value='未中獎';}
+  else if(phase==='replay'){label='本局結果';value='免費重來';}
+  else if(phase==='bonus') {
+    label='補中重來機會';
+    const knownBonus=selected.slice(draws).filter(id=>revealed.has(id));
+    const hit=knownBonus.some(id=>baseTargets.includes(id));
+    value=percent(hit?1:bonusProbability(TILE_COUNT-draws-knownBonus.length,baseTargets.length,Math.max(0,bonusCount-knownBonus.length)));
+  } else if(validBoard(board)) {
+    const key=`${draws}:${known.join(',')}`;
+    if(key!==chanceKey){chanceValue=conditionalWinProbability(known,draws);chanceKey=key;}
+    value=percent(chanceValue);
+  }
+  $('live-chance-label').textContent=label;
+  setLiveValue('live-chance',value);
+  $('live-flips').textContent=`已翻 ${revealed.size} / ${draws+bonusCount} 張`;
+  $('live-progress-bar').style.width=`${Math.min(100,revealed.size/(draws+bonusCount)*100)}%`;
+  $('live-mini-values').textContent=`完成 ${t.completed} 局 · 中獎 ${t.wins} 次 · 實際 ${rate}｜本局 ${value}`;
+  $('live-run-progress').textContent=runResult?`本輪完成 ${runResult.rounds} 局${runResult.mode==='rounds'?`，付費 ${runResult.paid} / ${runResult.target} 局`:''}${waitingForPayment?'；局數用完，付費後繼續':''}`:'';
+  drawSpendingCurve(t);
+}
+
+function purchasePackage() {
+  if(!validSettings()) { $('billing').showModal(); $('billing-form').reportValidity(); return; }
+  localData.live=purchaseGames(liveTotals(),settings().games,settings().price);
+  persistLocalData();
+  waitingForPayment=false;
+  const resume=paymentResume;
+  paymentResume=null;
+  resume?.();
+  updateControls();
+  if(phase==='initial'&&!selected.length)status(`選 ${settings().draws} 張牌`,'');
+}
 
 function readPreferences() {
   return Object.fromEntries(preferenceIds.map(id => {
@@ -122,9 +225,9 @@ function scheduleRecord() {
 }
 
 function settings() {
-  return { draws: Number(ui.draws.value), games: Number(ui.games.value), price: Number(ui.price.value), prize: Number(ui.prize.value), bonus: Number(ui.bonus.value), doubleReplay: ui['double-replay'].checked };
+  return { draws: Number(ui.draws.value), games: Number(ui.games.value), price: Number(ui.price.value), bonus: Number(ui.bonus.value), doubleReplay: ui['double-replay'].checked };
 }
-function validSettings() { return $('settings-form').checkValidity(); }
+function validSettings() { return $('settings-form').checkValidity() && $('billing-form').checkValidity(); }
 function say(text) {
   ui.toast.textContent = text;
   ui.toast.classList.add('show');
@@ -276,19 +379,21 @@ function renderTray() {
     fragment.append(empty);
   }
   ui.tray.replaceChildren(fragment);
+  renderLiveStats();
 }
 function updateControls() {
   const config = settings();
   const limit = config.draws + bonusCount;
   ui['draw-counter'].textContent = `${selected.length} / ${limit}`;
   ui['pool-count'].textContent = `${TILE_COUNT - selected.length} 張`;
-  const canPick = (phase === 'initial' || phase === 'bonus') && selected.length < limit;
+  const canPick = (phase === 'initial' || phase === 'bonus') && selected.length < limit && (roundAccounted || canStartPaidRound());
   for (const button of ui.pool.children) button.disabled = button.classList.contains('picked') || !canPick;
   ui['auto-draw'].disabled = !canPick || isDrawing || isRunning;
   ui['place-all'].disabled = isRunning;
   $('reveal-all').disabled = isRunning;
   ui['auto-draw'].textContent = phase === 'bonus' ? `補摸 ${Math.max(0, limit - selected.length)} 張` : '隨機選滿';
   scheduleRecord();
+  renderLiveStats();
 }
 function status(title, detail) {
   ui['status-title'].textContent = title;
@@ -296,6 +401,11 @@ function status(title, detail) {
 }
 function finishRound(nextPhase, title, detail) {
   phase = nextPhase;
+  if(roundAccounted&&!roundOutcomeRecorded) {
+    localData.live=completePlayedRound(liveTotals(),nextPhase);
+    roundOutcomeRecorded=true;
+    persistLocalData();
+  }
   status(title, detail);
   ui['new-round'].textContent = nextPhase === 'replay' ? '↻ 免費重來' : '↻ 洗牌';
   updateControls();
@@ -368,6 +478,13 @@ async function animatePlacement(id, source, { duration = 260 } = {}) {
 function pick(index, { holdInHand = false } = {}) {
   const button = ui.pool.children[index];
   if (!button || button.disabled || !['initial','bonus'].includes(phase)) return;
+  if(!roundAccounted) {
+    const next=beginPlayedRound(liveTotals());
+    if(!next){say('請先付費購買局數');return;}
+    localData.live=next;
+    roundAccounted=true;
+    persistLocalData();
+  }
   const id = deck[index];
   selected = [...selected, id];
   if (!holdInHand && (ui['auto-place'].checked || isRunning)) {
@@ -448,13 +565,16 @@ async function animateShuffle(duration) {
 
 function updateRunSummary(note = '') {
   if (!runResult) return;
-  const cost = runResult.paid * runResult.unitCost;
-  const net = runResult.wins * runResult.prize - cost;
-  $('run-summary').textContent = `${note ? `${note}\n` : ''}付費 ${runResult.paid} 局 · 重來 ${runResult.replays} 次\n中獎 ${runResult.wins} 次 · 共摸 ${runResult.rounds} 局\n花費 ${money(cost)}\n損益 ${net < 0 ? '−' : '+'}${money(Math.abs(net))}`;
+  $('run-summary').textContent=note;
+  renderLiveStats();
 }
 function stopRun(note = '已停止') {
   isRunning = false;
   runGeneration += 1;
+  waitingForPayment=false;
+  const resume=paymentResume;
+  paymentResume=null;
+  resume?.();
   $('run-start').disabled = false;
   $('run-stop').hidden = true;
   $('run-stop-table').hidden = true;
@@ -510,15 +630,22 @@ async function startRun() {
   isRunning = true;
   runGeneration += 1;
   const token = runGeneration;
-  runResult = { paid:0,rounds:0,wins:0,replays:0,unitCost:settings().price/settings().games,prize:settings().prize };
+  runResult = { paid:0,rounds:0,wins:0,replays:0,target:limit,mode };
   $('run-start').disabled = true;
   $('run-stop').hidden = false;
   $('run-stop-table').hidden = false;
   $('table-area').classList.add('is-running');
   $('table-area').scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
-  let free = false;
+  let free = liveTotals().freeAvailable;
   try {
     while (isRunning && token === runGeneration && (mode === 'win' || runResult.paid < limit || free)) {
+      if(!canStartPaidRound()) {
+        waitingForPayment=true;
+        status('局數用完，付費後繼續','');
+        renderLiveStats();
+        await new Promise(resolve=>{paymentResume=resolve;});
+        if(!isRunning || token!==runGeneration)break;
+      }
       await newRound({runner:true});
       if (!isRunning || token !== runGeneration) break;
       const config = settings();
@@ -579,6 +706,8 @@ async function newRound({ reproduce = false, runner = false, replayRecord = null
     currentRecordId = crypto.randomUUID();
     roundStartedAt = new Date().toISOString();
     roundPreferences = readPreferences();
+    roundAccounted=false;
+    roundOutcomeRecorded=false;
     selected = [];
     placed = new Set();
     revealed = new Set();
@@ -599,7 +728,7 @@ async function newRound({ reproduce = false, runner = false, replayRecord = null
     await animateShuffle(runner && $('run-speed').value === 'fast' ? 550 : 2300);
     if (current !== generation) return;
     phase = 'initial';
-    status(`選 ${settings().draws} 張牌`, reproduce || fixed ? '重現同一副牌' : '點選或拖到下方手牌區');
+    status(canStartPaidRound()?`選 ${settings().draws} 張牌`:'請先付費購買局數', reproduce || fixed ? '重現同一副牌' : '');
     updateControls();
   } catch (error) { status('無法洗牌', error.message); }
 }
@@ -628,26 +757,11 @@ function updateAnalysis() {
   }
   ui['config-error'].textContent = '';
   const config = settings();
-  ui.direct.textContent = percent(exactWinProbability(config.draws));
-  ui['ev-label'].textContent = `${config.games} 局的淨期望值`;
+  renderLiveStats();
   if (!stats) return;
-  const row = stats.find(item => item.draws === config.draws);
-  const result = economics({ ...config, ...row });
-  ui.eventual.replaceChildren(document.createTextNode((result.eventual * 100).toFixed(2)), Object.assign(document.createElement('small'), { textContent: '%' }));
-  ui['replay-prob'].textContent = percent(row.replay);
-  ui['package-win'].textContent = percent(result.packageWin);
-  ui['fair-prize'].textContent = Number.isFinite(result.fairPrize) ? money(result.fairPrize) : '無法中獎';
-  ui.net.textContent = `${result.net > 0 ? '+' : result.net < 0 ? '−' : ''}${money(Math.abs(result.net))}`;
-  ui.net.parentElement.classList.toggle('negative', result.net < 0);
-  ui['net-note'].textContent = `預期 ${result.expectedPrizes.toFixed(3)} 份獎品 × ${money(config.prize)} − ${money(config.price)}`;
-  ui['bar-win'].style.width = `${row.win * 100}%`;
-  ui['bar-replay'].style.width = `${row.replay * 100}%`;
-  const low = economics({ ...config, win: row.win, replay: Math.max(0, row.replay - 1.96 * row.standardError) }).eventual;
-  const high = economics({ ...config, win: row.win, replay: Math.min(.999, row.replay + 1.96 * row.standardError) }).eventual;
-  ui['estimate-note'].textContent = `已模擬 ${new Intl.NumberFormat('zh-TW').format(row.samples)} 次。最終中獎率約 95% 信賴區間：${percent(low)}～${percent(high)}；含重來數字為估計。每組預期進行 ${result.expectedRounds.toFixed(2)} 局（含重來）。`;
   const fragment = document.createDocumentFragment();
   for (const item of stats.filter(item => item.draws >= 10 && item.draws <= 15)) {
-    const values = economics({ ...config, ...item });
+    const values = economics({ ...config, ...item,prize:0 });
     const tr = document.createElement('tr');
     tr.classList.toggle('selected', item.draws === config.draws);
     tr.dataset.draws = String(item.draws);
@@ -658,12 +772,11 @@ function updateAnalysis() {
     button.setAttribute('aria-label', `改成每局摸 ${item.draws} 張`);
     first.append(button);
     tr.append(first);
-    for (const value of [percent(item.win), percent(item.replay), percent(values.eventual), `${values.net > 0 ? '+' : '−'}${money(Math.abs(values.net))}`]) {
+    for (const value of [percent(item.win), percent(item.replay), percent(values.eventual)]) {
       const td = document.createElement('td');
       td.textContent = value;
       tr.append(td);
     }
-    if (values.net < 0) tr.lastElementChild.classList.add('negative-text');
     fragment.append(tr);
   }
   ui['comparison-body'].replaceChildren(fragment);
@@ -673,14 +786,12 @@ function runSimulation() {
   stats = null;
   ui['compute-state'].textContent = '計算中 0%';
   ui['run-simulation'].disabled = true;
-  ui['estimate-note'].textContent = '正在瀏覽器背景模擬 300,000 次。牌桌可照常操作。';
-  for (const id of ['eventual','replay-prob','package-win','fair-prize','net']) ui[id].textContent = '—';
   ui['comparison-body'].replaceChildren();
   worker = new Worker(new URL('./worker.mjs', import.meta.url), { type: 'module' });
   worker.onmessage = ({ data }) => {
     if (data.rows) {
       stats = data.rows;
-      ui['compute-state'].textContent = '30 萬次完成';
+      ui['compute-state'].textContent = '計算完成';
       ui['run-simulation'].disabled = false;
       worker.terminate();
       worker = null;
@@ -689,7 +800,6 @@ function runSimulation() {
   };
   worker.onerror = () => {
     ui['compute-state'].textContent = '模擬未完成';
-    ui['estimate-note'].textContent = '背景運算無法啟動，請重新整理或按驗證重試。直接連線率仍為精確值。';
     ui['run-simulation'].disabled = false;
   };
   simulationNumber += 1;
@@ -796,19 +906,22 @@ ui['comparison-body'].addEventListener('click', event => {
   newRound();
   if (matchMedia('(max-width:700px)').matches) $('table-area').scrollIntoView({ behavior: 'smooth' });
 });
-for (const id of ['games','price','prize']) ui[id].addEventListener('input', () => { if(isRunning) stopRun(); updateAnalysis(); });
+for (const id of ['games','price']) ui[id].addEventListener('input', updateAnalysis);
 ui.draws.addEventListener('input', updateAnalysis);
 ui.draws.addEventListener('input', () => { if(isRunning) stopRun(); });
 ui.draws.addEventListener('change', () => newRound());
 for (const id of ['bonus','double-replay']) ui[id].addEventListener('change', () => {
   clearTimeout(simulationTimer);
-  simulationTimer = setTimeout(runSimulation, 120);
+  stats=null;
+  worker?.terminate();
+  worker=null;
+  if($('probability').open)simulationTimer=setTimeout(runSimulation,120);
   newRound();
 });
 ui.seed.addEventListener('change', () => { if (ui['lock-seed'].checked) newRound(); });
 ui['lock-seed'].addEventListener('change', () => { if (ui['lock-seed'].checked) say('已固定種子；下一局會重現同一副牌。'); });
 const showHelp = () => { if (!$('help').open) $('help').showModal(); };
-$('probability-open').addEventListener('click', () => { if (!$('probability').open) $('probability').showModal(); });
+$('probability-open').addEventListener('click', () => { if (!$('probability').open) $('probability').showModal(); if(!stats&&!worker)runSimulation(); });
 $('probability-close').addEventListener('click', () => $('probability').close());
 $('probability').addEventListener('click', event => {
   if (event.target !== $('probability')) return;
@@ -819,11 +932,24 @@ $('help-open').addEventListener('click', showHelp);
 $('sources-open').addEventListener('click', showHelp);
 $('help-close').addEventListener('click', () => $('help').close());
 $('help').addEventListener('click', event => { if (event.target === $('help')) { const r = $('help').getBoundingClientRect(); if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) $('help').close(); } });
+$('buy-games').addEventListener('click',purchasePackage);
+$('buy-games-mini').addEventListener('click',purchasePackage);
+$('billing-open').addEventListener('click',()=>{if(!$('billing').open)$('billing').showModal();});
+$('billing-close').addEventListener('click',()=>$('billing').close());
+$('billing-form').addEventListener('submit',event=>{
+  event.preventDefault();
+  if(!$('billing-form').reportValidity())return;
+  localData.preferences=readPreferences();
+  persistLocalData();
+  renderLiveStats();
+  $('billing').close();
+});
 $('settings-form').addEventListener('change', () => {
   if (!validSettings()) return;
   localData.preferences = readPreferences();
   persistLocalData();
 });
+$('billing-form').addEventListener('change',()=>{if(validSettings()){localData.preferences=readPreferences();persistLocalData();}});
 $('history-list').addEventListener('click', event => {
   const button = event.target.closest('[data-record-id]');
   if (!button) return;
@@ -836,21 +962,27 @@ $('history-list').addEventListener('click', event => {
   localData.preferences = readPreferences();
   persistLocalData();
   updateAnalysis();
-  runSimulation();
+  stats=null;
+  if($('probability').open)runSimulation();
   newRound({reproduce:true,replayRecord:record});
 });
 $('clear-local').addEventListener('click', () => {
+  if(isRunning)stopRun();
   clearTimeout(recordTimer);
   let cleared = false;
   try { cleared = clearLocalData(localStorage); } catch { /* Storage access may be disabled. */ }
   if (!cleared) { say('無法清除本機紀錄。'); return; }
-  localData = {version:1,preferences:{},history:[]};
+  localData = {version:1,preferences:{},history:[],live:emptyLiveStats()};
   currentRecordId = null;
+  roundAccounted=false;
+  roundOutcomeRecorded=false;
   renderHistory();
   $('storage-status').textContent = '本機設定與紀錄已清除。';
   say('本機紀錄已清除');
+  newRound();
 });
 try { localData = loadLocalData(localStorage); } catch { /* Use in-memory defaults. */ }
+localData.live=normalizeLiveStats(localData.live);
 restorePreferences(localData.preferences);
 renderHistory();
 if (matchMedia('(max-width:700px)').matches) $('settings-details').open = false;
@@ -865,4 +997,3 @@ try { setTheme(localStorage.getItem('bingo-theme') || 'black'); } catch { setThe
 window.addEventListener('pagehide', () => { recordCurrentRound(); isRunning=false; cancelShuffle(); poolObserver.disconnect(); worker?.terminate(); clearTimeout(toastTimer); clearTimeout(simulationTimer); clearTimeout(recordTimer); });
 updateAnalysis();
 newRound();
-runSimulation();

@@ -9,14 +9,12 @@
   <script type="module" src="app.mjs"></script>
 </head>
 <body>
-  <header class="topbar"><a class="brand" href="#"><span class="brand-mark">發</span><span>麻將賓果</span></a><nav><a href="#table-area">牌桌</a><button class="text-button" id="probability-open" aria-haspopup="dialog" aria-controls="probability">機率</button><button class="text-button" id="help-open">規則</button><button class="theme-toggle" id="theme-toggle" aria-pressed="true">背景：黑色</button></nav></header>
+  <header class="topbar"><a class="brand" href="#"><span class="brand-mark">發</span><span>麻將賓果</span></a><nav><a href="#table-area">牌桌</a><button class="text-button" id="probability-open" aria-haspopup="dialog" aria-controls="probability">機率</button><button class="text-button" id="billing-open" aria-haspopup="dialog" aria-controls="billing">設定</button><button class="text-button" id="help-open">規則</button><button class="theme-toggle" id="theme-toggle" aria-pressed="true">背景：黑色</button></nav></header>
   <main>
     <div class="workspace">
       <aside class="settings panel"><details open id="settings-details"><summary><h2>這局怎麼玩</h2><span>調整設定</span></summary><div class="settings-inner">
         <form id="settings-form">
           <label for="draws">每局摸幾張</label><div class="unit-input"><input id="draws" type="number" min="1" max="36" value="15" step="1" required><span>張</span></div>
-          <div class="form-pair"><div><label for="games">購買局數</label><div class="unit-input"><input id="games" type="number" min="1" max="10000" step="1" value="6" required><span>局</span></div></div><div><label for="price">整組價格</label><div class="unit-input"><input id="price" type="number" min="0" max="10000000" step="1" value="100" required><span>元</span></div></div></div>
-          <label for="prize">一份獎品的價值</label><div class="unit-input"><span>NT$</span><input id="prize" type="number" min="0" max="10000000" step="1" value="300" required></div>
           <div class="settings-divider"></div><h3>擺牌方式</h3>
           <label class="check-row"><input id="auto-place" type="checkbox"><span><strong>自動擺牌</strong><small>不勾選時，翻牌後自己拖到對應位置</small></span></label>
           <label class="check-row"><input id="no-shuffle" type="checkbox"><span><strong>不打亂</strong><small>勾選後，底盤按固定順序排列</small></span></label>
@@ -29,6 +27,7 @@
       </div></details></aside>
       <section class="table-panel" id="table-area" aria-labelledby="table-title">
         <div class="table-heading"><div><span class="round-label" id="round-label">第 1 局</span><h2 id="table-title">選牌</h2></div><div class="table-actions"><button id="run-stop-table" class="felt-button" hidden>停止跑牌</button><button id="new-round" class="felt-button">↻ 洗牌</button></div></div>
+        <div class="live-mini"><span id="live-mini-values">已完成 0 局 · 中獎 0 次</span><button id="buy-games-mini" class="felt-button">付費購買</button></div>
         <div class="pool-heading"><h3>牌池 <span id="pool-count">36 張</span></h3><button id="auto-draw" class="felt-link">隨機選滿</button></div>
         <div id="pool" class="pool" aria-label="隨機牌背"></div>
         <div class="board-wrap"><div class="axis-top" aria-hidden="true"><span>A</span><span>B</span><span>C</span><span>D</span><span>E</span><span>F</span></div><div class="board" id="board" aria-label="6 乘 6 對獎底盤"></div></div>
@@ -37,17 +36,19 @@
         <div id="tray-section" class="tray-section"><div class="pool-heading"><h3>手牌</h3><button id="reveal-all" class="felt-link">全部翻開</button></div><div id="tray" class="tray"></div></div>
         <div class="table-bottom"><span id="seed-label">本局隨機種子</span><button class="felt-link" id="replay-hand">重現這一副</button></div>
       </section>
-      <aside class="analytics panel" id="analysis"><div class="analysis-heading"><h2>機率與期望值</h2><span id="compute-state" class="compute-badge">計算中</span></div>
-        <div class="main-probability"><span>每付費局最終中獎率</span><strong id="eventual">—<small>%</small></strong><p>含免費重來，直到中獎或結束</p></div>
-        <div class="prob-row"><span>原始摸牌直接連線 <small>精確</small></span><strong id="direct">—</strong></div><div class="prob-row"><span>單次免費重來率 <small>估計</small></span><strong id="replay-prob">—</strong></div><div class="prob-bar"><i id="bar-win"></i><i id="bar-replay"></i></div><div class="bar-key"><span><i></i>中獎</span><span><i></i>重來</span><span><i></i>結束</span></div>
-        <div class="ev-box"><span id="ev-label">6 局的淨期望值</span><strong id="net">—</strong><p id="net-note">獎品期望價值 − 購買成本</p></div><div class="prob-row"><span>整組至少中一次</span><strong id="package-win">—</strong></div><div class="prob-row"><span>獎品損益兩平價值</span><strong id="fair-prize">—</strong></div><p class="estimate-note" id="estimate-note">正在瀏覽器背景模擬 300,000 次。牌桌可照常操作。</p>
-        <button id="run-simulation" class="secondary full">↻ 再跑 30 萬次驗證</button>
-        <details class="formula"><summary>數字怎麼算？</summary><p>直接連線率 w：以 14 條線的包含排除原理精確計算，不將多條線重複相加。</p><p>單次重來率 r：以 30 萬次隨機摸牌估計；單聽補中率以超幾何公式計算。先判斷直接連線，再判斷重來。</p><p>每付費局最終中獎率 q = w ÷ (1 − r)。假設每次重來重新洗牌、規則相同，重來次數無上限。</p><p>淨期望值 = 局數 × q × 獎品價值 − 整組價格。每局中獎領一份，不按連線數加倍；買的每局均玩完。</p><p>整組至少中一次 = 1 − (1 − q)<sup>局數</sup>。期望值為長期平均，不保證單次結果。</p></details>
+      <aside class="live-stats panel" id="live-stats"><div class="live-heading"><h2>即時統計</h2><span id="live-state">待選牌</span></div>
+        <button id="buy-games" class="purchase-button">付費購買 6 局 · NT$ 100</button><div class="credit-row"><span>剩餘局數</span><strong id="live-credits">0</strong></div>
+        <div class="actual-rate"><span>實際中獎率</span><strong id="live-rate">—</strong><small id="live-rate-detail">0 中獎 / 0 完成</small></div>
+        <dl class="live-counts"><div><dt>已完成局數</dt><dd id="live-rounds">0</dd></div><div><dt>中獎次數</dt><dd id="live-wins">0</dd></div><div><dt>付費局數</dt><dd id="live-paid">0</dd></div><div><dt>免費重來</dt><dd id="live-replays">0</dd></div></dl>
+        <div class="live-money"><span>累計花費</span><strong id="live-spent">NT$ 0</strong><div><span>平均中獎花費</span><b id="live-average">尚未中獎</b></div></div><p id="live-last-win" class="live-caption">尚未中獎</p>
+        <div class="current-chance"><div><span id="live-chance-label">本局連線機會</span><strong id="live-chance">—</strong></div><small id="live-flips">已翻 0 / 15 張</small><div class="live-progress"><i id="live-progress-bar"></i></div></div>
+        <div class="curve-heading"><h3>支出曲線</h3><span>● 中獎</span></div><svg id="live-curve" viewBox="0 0 280 145" role="img" aria-label="隨完成局數更新的累計支出曲線"></svg><p id="live-run-progress" class="live-caption"></p>
       </aside>
     </div>
     <footer><button id="sources-open" class="text-button">規則與參考</button></footer>
   </main>
-  <dialog id="probability" class="probability-dialog" aria-labelledby="probability-title"><div class="dialog-heading"><h2 id="probability-title">機率</h2><button class="icon-button" id="probability-close" aria-label="關閉機率">×</button></div><p class="field-note">點張數切換設定</p><div class="comparison"><div class="table-scroll"><table><thead><tr><th>摸牌張數</th><th>直接中獎率 <span>精確</span></th><th>免費重來率 <span>估計</span></th><th>最終中獎率 <span>估計</span></th><th>整組淨期望值 <span>估計</span></th></tr></thead><tbody id="comparison-body"></tbody></table></div></div></dialog>
+  <dialog id="probability" class="probability-dialog" aria-labelledby="probability-title"><div class="dialog-heading"><h2 id="probability-title">機率</h2><button class="icon-button" id="probability-close" aria-label="關閉機率">×</button></div><p class="field-note">點張數切換設定 <span id="compute-state">尚未計算</span></p><div class="comparison"><div class="table-scroll"><table><thead><tr><th>摸牌張數</th><th>直接中獎率 <span>精確</span></th><th>免費重來率 <span>估計</span></th><th>最終中獎率 <span>估計</span></th></tr></thead><tbody id="comparison-body"></tbody></table></div></div><button id="run-simulation" class="secondary full">重新計算比較表</button></dialog>
+  <dialog id="billing" aria-labelledby="billing-title"><div class="dialog-heading"><h2 id="billing-title">設定</h2><button class="icon-button" id="billing-close" aria-label="關閉設定">×</button></div><form id="billing-form"><label for="games">每次購買局數</label><div class="unit-input"><input id="games" type="number" min="1" max="10000" step="1" value="6" required><span>局</span></div><label for="price">每次價格</label><div class="unit-input"><input id="price" type="number" min="0" max="10000000" step="1" value="100" required><span>元</span></div><button type="submit" class="secondary full billing-save">儲存設定</button></form></dialog>
   <dialog id="help"><div class="dialog-heading"><h2>規則</h2><button class="icon-button" id="help-close" aria-label="關閉說明">×</button></div><p>底盤有 36 張不重複牌。每局從洗好的牌背選你設定的張數（1～36 張；夜市常見 10～15 張），放進底盤相同的牌面；橫、直各 6 條，加上 2 條對角線，共 14 條中任一條湊滿 6 張就中獎。</p><ol><li>點擊牌背摸牌。手牌先蓋著放到下方，點擊翻開後拖到對應位置。勾選「自動擺牌」可省略翻牌與拖拉。</li><li>摸滿後，先判斷是否中獎；沒中再看聽牌。差同一張才能成兩條線，仍算聽一張。</li><li>預設聽兩張以上免費重來；單聽可補摸 5 張。補中只重來，補不中結束。</li><li>「洗牌開新局」會產生全新牌序；「重現這一副」重用本局種子。底盤預設每局隨機；勾選「不打亂」才維持固定順序。重現會保留原底盤與牌序。</li></ol><p>這是規則可調的機率演示；原對話採用的雙聽重來屬本實驗設定，不代表每家夜市規則。</p><p>參考：<a href="https://play.google.com/store/apps/details?id=com.Sapp.BingoMj&hl=zh_TW" target="_blank" rel="noopener">麻將賓果開發者玩法說明</a>、<a href="https://www.nownews.com/news/5945090" target="_blank" rel="noopener">夜市補摸重來玩法報導</a>、<a href="https://github.com/anthropics/skills/blob/main/skills/frontend-design/SKILL.md" target="_blank" rel="noopener">frontend-design skill</a>。</p></dialog>
   <div id="toast" class="toast" role="status"></div>
 </body></html>
