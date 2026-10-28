@@ -1,0 +1,20 @@
+name: Verify Mahjong Bingo v2
+on:
+  push:
+    branches: ['feature/physics-v2-6-30-shake', main]
+  pull_request:
+    branches: [main]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Unit tests
+        run: npm test
+      - name: Verify committed standalone pages
+        run: |
+          node build.mjs
+          git diff --exit-code -- index.html docs/index.html
