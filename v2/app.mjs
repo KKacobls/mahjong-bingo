@@ -1,5 +1,5 @@
 import { createTileAudio } from '../dist/audio.mjs';
-import { analyze, economics, TILE_COUNT } from '../dist/math.mjs';
+import { analyze, economics, TILE_COUNT, LINES } from '../dist/math.mjs';
 import { createBodies, stepBodies } from '../dist/shuffle.mjs';
 import { loadLocalData, upsertRecord, saveLocalData, clearLocalData, validBoard } from '../dist/records.mjs';
 import { emptyLiveStats, normalizeLiveStats, purchaseGames, beginPlayedRound, completePlayedRound } from '../dist/live.mjs';
@@ -53,6 +53,8 @@ let poolBodies = [];
 let poolWidth = 0;
 let poolHeight = 0;
 const bonusFallen = new Set();
+// The physical 6×6 board keeps its logical state; only its presentation sheds tiles.
+let waitingFocus = null; // Set of six positions in the single waiting line, or null.
 const bonusGhosts = new Set();
 let motionEnabled = false;
 let motionLast = null;
@@ -301,6 +303,7 @@ function updateBoard() {
     if (id === undefined) continue;
     cell.classList.toggle('placed', placed.has(id));
     cell.classList.toggle('bonus-discarded', bonusFallen.has(id));
+    cell.classList.toggle('spotlight-dropped', waitingFocus !== null && !waitingFocus.has(position));
     cell.classList.toggle('winning', winning.has(position));
     cell.classList.toggle('waiting', !winning.size && targets.has(position));
     cell.setAttribute('aria-label', `${String.fromCharCode(65 + position % 6)}${Math.floor(position / 6) + 1}，${tileName(id)}，${placed.has(id) ? '已放置' : '未放置'}`);
@@ -318,6 +321,59 @@ function renderPool() {
   }
   ui.pool.replaceChildren(fragment);
   layoutPool(true);
+}
+
+
+function boardBarrier() {
+  const pool=ui.pool.getBoundingClientRect(), boardBox=ui.board.getBoundingClientRect();
+  if(!pool.width||!pool.height||!boardBox.width||!boardBox.height||
+     boardBox.top>=pool.bottom||boardBox.bottom<=pool.top||
+     boardBox.left>=pool.right||boardBox.right<=pool.left) return null;
+  return {l:boardBox.left-pool.left,r:boardBox.right-pool.left,
+          t:boardBox.top-pool.top,b:boardBox.bottom-pool.top};
+}
+function extents(body) {
+  const c=Math.abs(Math.cos(body.angle)),s=Math.abs(Math.sin(body.angle));
+  return {x:c*body.halfWidth+s*body.halfHeight+2,y:s*body.halfWidth+c*body.halfHeight+2};
+}
+function inBoard(body,block) {
+  if(!block)return false;
+  const e=extents(body);
+  return body.x+e.x>block.l&&body.x-e.x<block.r&&
+         body.y+e.y>block.t&&body.y-e.y<block.b;
+}
+function keepOutsideBoard(bodies,block,width,height) {
+  if(!block)return;
+  for(const body of bodies) {
+    if(!inBoard(body,block))continue;
+    const e=extents(body);
+    const exits=[
+      {dist:body.x-block.l+e.x+1,axis:'x',target:block.l-e.x-1,sign:-1},
+      {dist:block.r-body.x+e.x+1,axis:'x',target:block.r+e.x+1,sign:1},
+      {dist:body.y-block.t+e.y+1,axis:'y',target:block.t-e.y-1,sign:-1},
+      {dist:block.b-body.y+e.y+1,axis:'y',target:block.b+e.y+1,sign:1},
+    ].filter(p=>p.dist>=0&&p.target>=(p.axis==='x'?e.x:e.y)&&p.target<=(p.axis==='x'?width-e.x:height-e.y))
+     .sort((a,b)=>a.dist-b.dist);
+    if(!exits.length)continue;
+    const exit=exits[0];
+    body[exit.axis]=exit.target;
+    const v=exit.axis==='x'?'vx':'vy';
+    body[v]=exit.sign*Math.max(18,Math.abs(body[v])*.33);
+    body.spin*=.7;
+  }
+}
+function scatterPoolAroundBoard(bodies,block,width,height) {
+  if(!block)return;
+  for(const body of bodies) {
+    if(!inBoard(body,block))continue;
+    const e=extents(body);
+    for(let i=0;i<200;i++) {
+      body.x=e.x+secureRandom()*Math.max(1,width-2*e.x);
+      body.y=e.y+secureRandom()*Math.max(1,height-2*e.y);
+      if(!inBoard(body,block))break;
+    }
+  }
+  keepOutsideBoard(bodies,block,width,height);
 }
 
 function paintPool() {
@@ -350,7 +406,13 @@ function layoutPool(reset = false) {
   }
   poolWidth = width;
   poolHeight = height;
-  for (let i = 0; i < 100; i += 1) stepBodies(poolBodies,{width,height,dt:1/120});
+  const barrier=boardBarrier();
+  if(reset)scatterPoolAroundBoard(poolBodies,barrier,width,height);
+  keepOutsideBoard(poolBodies,barrier,width,height);
+  for(let i=0;i<100;i++){
+    stepBodies(poolBodies,{width,height,dt:1/120});
+    keepOutsideBoard(poolBodies,barrier,width,height);
+  }
   paintPool();
 }
 const poolObserver = new ResizeObserver(() => {
@@ -374,7 +436,10 @@ function stirPool(dx = 0, dy = 0) {
     const dt = Math.min((now - previous) / 1000, 0.034);
     previous = now;
     const active = poolBodies.filter((_, i) => !ui.pool.children[i]?.classList.contains('picked'));
-    if (active.length) stepBodies(active, {width:poolWidth, height:poolHeight, dt, driving:false});
+    if(active.length){
+      stepBodies(active, {width:poolWidth, height:poolHeight, dt, driving:false});
+      keepOutsideBoard(active,boardBarrier(),poolWidth,poolHeight);
+    }
     paintPool();
     if (now < poolSettleEnd && ui.pool.isConnected) poolSettleFrame = requestAnimationFrame(frame);
     else poolSettleFrame = 0;
@@ -418,7 +483,9 @@ $('motion-toggle').addEventListener('click', async () => {
 });
 function renderTray() {
   const pending = selected.filter(id => !placed.has(id));
-  ui.tray.style.setProperty('--hand-rows', String(Math.max(2, Math.ceil(pending.length / 12))));
+  const handRows=Math.max(1,Math.ceil(pending.length/12));
+  ui.tray.style.setProperty('--hand-rows',String(handRows));
+  $('table-area').style.setProperty('--hand-height',`${18+handRows*38}px`);
   $('table-area').style.setProperty('--hand-weight', pending.length > 24 ? '.8fr' : '.42fr');
   ui['place-all'].hidden = pending.length === 0;
   $('reveal-all').hidden = !pending.some(id => !revealed.has(id));
@@ -453,7 +520,6 @@ function updateControls() {
   const canPick = (phase === 'initial' || phase === 'bonus') && selected.length < limit && (roundAccounted || canStartPaidRound());
   for (const button of ui.pool.children) button.disabled = button.classList.contains('picked') || !canPick;
   ui['auto-draw'].disabled = !canPick || isDrawing || isRunning;
-  for(const id of ['side-pool-left','side-pool-right'])$(id).disabled = !canPick || isDrawing || isRunning;
   ui['place-all'].disabled = isRunning;
   $('reveal-all').disabled = isRunning;
   ui['auto-draw'].textContent = phase === 'bonus' ? `補摸 ${Math.max(0, limit - selected.length)} 張` : '隨機選滿';
@@ -477,6 +543,55 @@ function finishRound(nextPhase, title, detail) {
   updateControls();
   recordCurrentRound();
 }
+
+// After the initial draw is fully placed, visually clear away EVERY tile unrelated
+// to the ONE-TILE waiting line. This must not mutate the board, placed, or selected arrays.
+function focusOnSingleWait(info) {
+  if (waitingFocus || info.targets.length !== 1) return;
+  const chosen = new Set(selected.map(id=>board.indexOf(id)));
+  const target = info.targets[0];
+  const keep = new Set();
+  for (const line of LINES) {
+    if (!line.includes(target)) continue;
+    const missing=line.filter(position=>!chosen.has(position));
+    if (missing.length===1 && missing[0]===target) for(const position of line)keep.add(position);
+  }
+  if (!keep.size) return;
+  waitingFocus=keep;
+  const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const animate=!reduced && !isRunning;
+  // Take a visual snapshot BEFORE hiding the unwanted cells.
+  for (const [position,cell] of [...ui.board.children].entries()) {
+    if(keep.has(position))continue;
+    if(animate) {
+      const box=cell.getBoundingClientRect();
+      const ghost=cell.cloneNode(true);
+      ghost.removeAttribute('id');
+      ghost.className='board-fall-ghost'+(placed.has(board[position])?' is-placed':' is-unplaced');
+      ghost.style.left=box.left+'px';
+      ghost.style.top=box.top+'px';
+      ghost.style.width=box.width+'px';
+      ghost.style.height=box.height+'px';
+      ghost.setAttribute('aria-hidden','true');
+      document.body.append(ghost);
+      bonusGhosts.add(ghost);
+      const spin=(secureRandom()-.5)*620;
+      const shift=(secureRandom()-.5)*190;
+      const distance=window.innerHeight-box.top+box.height+120;
+      const delay=secureRandom()*180;
+      const animation=ghost.animate([
+        {transform:'translate3d(0,0,0) rotate(0deg)',opacity:1,offset:0},
+        {transform:`translate3d(${shift*.25}px,-25px,0) rotate(${spin*.15}deg)`,opacity:1,offset:.17},
+        {transform:`translate3d(${shift}px,${distance}px,0) rotate(${spin}deg)`,opacity:0,offset:1}
+      ],{duration:950+secureRandom()*340,delay,easing:'cubic-bezier(.25,.1,.66,.98)',fill:'forwards'});
+      animation.finished.catch(()=>{}).finally(()=>{ghost.remove();bonusGhosts.delete(ghost)});
+    }
+    cell.classList.add('spotlight-dropped');
+  }
+  // Ensure a unique logical target stays visible and highlighted.
+  updateBoard();
+}
+
 // Bonus misses fall under simulated gravity; the game result still checks all five drawn IDs.
 function fallBonusMisses(drawCount) {
   for (const id of selected.slice(drawCount)) {
@@ -542,7 +657,8 @@ function checkRound() {
     phase = 'bonus';
     baseTargets = info.targets.map(position => board[position]);
     bonusCount = Math.min(config.bonus, TILE_COUNT - config.draws);
-    status(`聽牌，補摸 ${bonusCount} 張`, `等 ${baseTargets.map(tileName).join('、')}`);
+    if (info.targets.length === 1) focusOnSingleWait(info);
+    status(`聽牌，補摸 ${bonusCount} 張`, `只保留聽牌線，等 ${baseTargets.map(tileName).join('、')}`);
     updateControls();
   } else {
     finishRound('lost', '未中獎', '');
@@ -591,10 +707,14 @@ function pick(index, { holdInHand = false } = {}) {
   const id = deck[index];
   tileAudio.play('pick');
   selected = [...selected, id];
-  if (!holdInHand && (ui['auto-place'].checked || isRunning)) {
+  // When only the waiting row remains, bonus misses cannot be manually
+  // dropped into removed cells. Auto-process all five bonus picks instead.
+  if (!holdInHand && (ui['auto-place'].checked || isRunning || (phase === 'bonus' && waitingFocus !== null))) {
     revealed.add(id);
     placed.add(id);
-    animatePlacement(id, button);
+    if (phase !== 'bonus' || waitingFocus === null || baseTargets.includes(id)) {
+      animatePlacement(id, button);
+    }
   }
   button.classList.add('picked');
   button.disabled = true;
@@ -657,6 +777,7 @@ async function animateShuffle(duration) {
       for (let i = 0; i < steps; i += 1) {
         elapsedSimulation += dt / steps;
         stepBodies(poolBodies,{width:poolWidth,height:poolHeight,dt:dt/steps,time:phaseOffset+elapsedSimulation,driving:elapsed < duration * .66});
+        keepOutsideBoard(poolBodies,boardBarrier(),poolWidth,poolHeight);
       }
       if (elapsed < duration * .75) tileAudio.play('shuffle');
       paintPool();
@@ -798,6 +919,7 @@ async function newRound({ reproduce = false, runner = false, replayRecord = null
   for (const ghost of bonusGhosts) ghost.remove();
   bonusGhosts.clear();
   bonusFallen.clear();
+  waitingFocus = null;
   if (poolSettleFrame) cancelAnimationFrame(poolSettleFrame);
   poolSettleFrame = 0;
   flightNodes = new Set();
@@ -918,15 +1040,6 @@ function runSimulation() {
   worker.postMessage({ samples: 300000, doubleReplay: settings().doubleReplay, bonus: settings().bonus, seed: `chance-lab-${simulationNumber}` });
 }
 
-function sideDraw() {
-  if (isRunning || isDrawing) return;
-  const available = [...ui.pool.children].filter(button => !button.disabled);
-  if (!available.length) return;
-  const n = crypto.getRandomValues(new Uint32Array(1))[0] / 4294967296;
-  pick(Number(available[Math.floor(n*available.length)].dataset.index));
-  stirPool();
-}
-for(const id of ['side-pool-left','side-pool-right'])$(id).addEventListener('click',sideDraw);
 ui.pool.addEventListener('click', event => {
   if (isRunning || Date.now() < suppressClickUntil) return;
   const button = event.target.closest('[data-index]');
@@ -1139,7 +1252,7 @@ function setTheme(theme) {
 }
 $('theme-toggle').addEventListener('click', () => setTheme(document.documentElement.dataset.theme === 'black' ? 'light' : 'black'));
 try { setTheme(localStorage.getItem('bingo-theme') || 'black'); } catch { setTheme('black'); }
-window.addEventListener('pagehide', () => { window.removeEventListener('devicemotion',handleMotion); for(const ghost of bonusGhosts)ghost.remove(); if(poolSettleFrame)cancelAnimationFrame(poolSettleFrame); recordCurrentRound(); isRunning=false; tileAudio.stop(); cancelShuffle(); poolObserver.disconnect(); worker?.terminate(); clearTimeout(toastTimer); clearTimeout(simulationTimer); clearTimeout(recordTimer); });
+window.addEventListener('pagehide', () => { window.removeEventListener('devicemotion',handleMotion); for(const ghost of bonusGhosts)ghost.remove(); waitingFocus=null; if(poolSettleFrame)cancelAnimationFrame(poolSettleFrame); recordCurrentRound(); isRunning=false; tileAudio.stop(); cancelShuffle(); poolObserver.disconnect(); worker?.terminate(); clearTimeout(toastTimer); clearTimeout(simulationTimer); clearTimeout(recordTimer); });
 updateAnalysis();
 newRound();
 
