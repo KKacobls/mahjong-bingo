@@ -320,6 +320,59 @@ function renderPool() {
   layoutPool(true);
 }
 
+
+function boardBarrier() {
+  const pool=ui.pool.getBoundingClientRect(), boardBox=ui.board.getBoundingClientRect();
+  if(!pool.width||!pool.height||!boardBox.width||!boardBox.height||
+     boardBox.top>=pool.bottom||boardBox.bottom<=pool.top||
+     boardBox.left>=pool.right||boardBox.right<=pool.left) return null;
+  return {l:boardBox.left-pool.left,r:boardBox.right-pool.left,
+          t:boardBox.top-pool.top,b:boardBox.bottom-pool.top};
+}
+function extents(body) {
+  const c=Math.abs(Math.cos(body.angle)),s=Math.abs(Math.sin(body.angle));
+  return {x:c*body.halfWidth+s*body.halfHeight+2,y:s*body.halfWidth+c*body.halfHeight+2};
+}
+function inBoard(body,block) {
+  if(!block)return false;
+  const e=extents(body);
+  return body.x+e.x>block.l&&body.x-e.x<block.r&&
+         body.y+e.y>block.t&&body.y-e.y<block.b;
+}
+function keepOutsideBoard(bodies,block,width,height) {
+  if(!block)return;
+  for(const body of bodies) {
+    if(!inBoard(body,block))continue;
+    const e=extents(body);
+    const exits=[
+      {dist:body.x-block.l+e.x+1,axis:'x',target:block.l-e.x-1,sign:-1},
+      {dist:block.r-body.x+e.x+1,axis:'x',target:block.r+e.x+1,sign:1},
+      {dist:body.y-block.t+e.y+1,axis:'y',target:block.t-e.y-1,sign:-1},
+      {dist:block.b-body.y+e.y+1,axis:'y',target:block.b+e.y+1,sign:1},
+    ].filter(p=>p.dist>=0&&p.target>=(p.axis==='x'?e.x:e.y)&&p.target<=(p.axis==='x'?width-e.x:height-e.y))
+     .sort((a,b)=>a.dist-b.dist);
+    if(!exits.length)continue;
+    const exit=exits[0];
+    body[exit.axis]=exit.target;
+    const v=exit.axis==='x'?'vx':'vy';
+    body[v]=exit.sign*Math.max(18,Math.abs(body[v])*.33);
+    body.spin*=.7;
+  }
+}
+function scatterPoolAroundBoard(bodies,block,width,height) {
+  if(!block)return;
+  for(const body of bodies) {
+    if(!inBoard(body,block))continue;
+    const e=extents(body);
+    for(let i=0;i<200;i++) {
+      body.x=e.x+secureRandom()*Math.max(1,width-2*e.x);
+      body.y=e.y+secureRandom()*Math.max(1,height-2*e.y);
+      if(!inBoard(body,block))break;
+    }
+  }
+  keepOutsideBoard(bodies,block,width,height);
+}
+
 function paintPool() {
   for (const [index, body] of poolBodies.entries()) {
     const tile = ui.pool.children[index];
@@ -350,7 +403,13 @@ function layoutPool(reset = false) {
   }
   poolWidth = width;
   poolHeight = height;
-  for (let i = 0; i < 100; i += 1) stepBodies(poolBodies,{width,height,dt:1/120});
+  const barrier=boardBarrier();
+  if(reset)scatterPoolAroundBoard(poolBodies,barrier,width,height);
+  keepOutsideBoard(poolBodies,barrier,width,height);
+  for(let i=0;i<100;i++){
+    stepBodies(poolBodies,{width,height,dt:1/120});
+    keepOutsideBoard(poolBodies,barrier,width,height);
+  }
   paintPool();
 }
 const poolObserver = new ResizeObserver(() => {
@@ -374,7 +433,10 @@ function stirPool(dx = 0, dy = 0) {
     const dt = Math.min((now - previous) / 1000, 0.034);
     previous = now;
     const active = poolBodies.filter((_, i) => !ui.pool.children[i]?.classList.contains('picked'));
-    if (active.length) stepBodies(active, {width:poolWidth, height:poolHeight, dt, driving:false});
+    if(active.length){
+      stepBodies(active, {width:poolWidth, height:poolHeight, dt, driving:false});
+      keepOutsideBoard(active,boardBarrier(),poolWidth,poolHeight);
+    }
     paintPool();
     if (now < poolSettleEnd && ui.pool.isConnected) poolSettleFrame = requestAnimationFrame(frame);
     else poolSettleFrame = 0;
@@ -418,7 +480,9 @@ $('motion-toggle').addEventListener('click', async () => {
 });
 function renderTray() {
   const pending = selected.filter(id => !placed.has(id));
-  ui.tray.style.setProperty('--hand-rows', String(Math.max(2, Math.ceil(pending.length / 12))));
+  const handRows=Math.max(1,Math.ceil(pending.length/12));
+  ui.tray.style.setProperty('--hand-rows',String(handRows));
+  $('table-area').style.setProperty('--hand-height',`${18+handRows*38}px`);
   $('table-area').style.setProperty('--hand-weight', pending.length > 24 ? '.8fr' : '.42fr');
   ui['place-all'].hidden = pending.length === 0;
   $('reveal-all').hidden = !pending.some(id => !revealed.has(id));
@@ -453,7 +517,6 @@ function updateControls() {
   const canPick = (phase === 'initial' || phase === 'bonus') && selected.length < limit && (roundAccounted || canStartPaidRound());
   for (const button of ui.pool.children) button.disabled = button.classList.contains('picked') || !canPick;
   ui['auto-draw'].disabled = !canPick || isDrawing || isRunning;
-  for(const id of ['side-pool-left','side-pool-right'])$(id).disabled = !canPick || isDrawing || isRunning;
   ui['place-all'].disabled = isRunning;
   $('reveal-all').disabled = isRunning;
   ui['auto-draw'].textContent = phase === 'bonus' ? `補摸 ${Math.max(0, limit - selected.length)} 張` : '隨機選滿';
@@ -657,6 +720,7 @@ async function animateShuffle(duration) {
       for (let i = 0; i < steps; i += 1) {
         elapsedSimulation += dt / steps;
         stepBodies(poolBodies,{width:poolWidth,height:poolHeight,dt:dt/steps,time:phaseOffset+elapsedSimulation,driving:elapsed < duration * .66});
+        keepOutsideBoard(poolBodies,boardBarrier(),poolWidth,poolHeight);
       }
       if (elapsed < duration * .75) tileAudio.play('shuffle');
       paintPool();
@@ -918,15 +982,6 @@ function runSimulation() {
   worker.postMessage({ samples: 300000, doubleReplay: settings().doubleReplay, bonus: settings().bonus, seed: `chance-lab-${simulationNumber}` });
 }
 
-function sideDraw() {
-  if (isRunning || isDrawing) return;
-  const available = [...ui.pool.children].filter(button => !button.disabled);
-  if (!available.length) return;
-  const n = crypto.getRandomValues(new Uint32Array(1))[0] / 4294967296;
-  pick(Number(available[Math.floor(n*available.length)].dataset.index));
-  stirPool();
-}
-for(const id of ['side-pool-left','side-pool-right'])$(id).addEventListener('click',sideDraw);
 ui.pool.addEventListener('click', event => {
   if (isRunning || Date.now() < suppressClickUntil) return;
   const button = event.target.closest('[data-index]');
