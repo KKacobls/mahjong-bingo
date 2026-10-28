@@ -1,11 +1,12 @@
 import { createTileAudio } from '../dist/audio.mjs';
+import { fixedProbabilityRows, FIXED_SAMPLE_COUNT } from './fixed-probabilities.mjs';
 import { analyze, economics, TILE_COUNT, LINES } from '../dist/math.mjs';
 import { createBodies, stepBodies } from '../dist/shuffle.mjs';
 import { loadLocalData, upsertRecord, saveLocalData, clearLocalData, validBoard } from '../dist/records.mjs';
 import { emptyLiveStats, normalizeLiveStats, purchaseGames, beginPlayedRound, completePlayedRound } from '../dist/live.mjs';
 
 const $ = id => document.getElementById(id);
-const ui = Object.fromEntries(['draws','games','price','bonus','double-replay','auto-place','appearance','seed','lock-seed','board','pool','tray','tray-section','status-title','status-detail','draw-counter','round-label','pool-count','seed-label','new-round','auto-draw','place-all','compute-state','comparison-body','config-error','run-simulation','toast'].map(id => [id, $(id)]));
+const ui = Object.fromEntries(['draws','games','price','bonus','double-replay','auto-place','appearance','seed','lock-seed','board','pool','tray','tray-section','status-title','status-detail','draw-counter','round-label','pool-count','seed-label','new-round','auto-draw','place-all','compute-state','comparison-body','config-error','toast'].map(id => [id, $(id)]));
 const tileAudio = createTileAudio();
 let soundEnabled = true;
 try { soundEnabled = localStorage.getItem('bingo-sound') !== 'off'; } catch { /* Storage is optional. */ }
@@ -39,10 +40,7 @@ let bonusCount = 0;
 let activeTile = null;
 let isDrawing = false;
 let generation = 0;
-let stats = null;
-let worker = null;
-let simulationNumber = 0;
-let simulationTimer;
+let stats = fixedProbabilityRows({bonus:5,doubleReplay:true});
 let toastTimer;
 let drag = null;
 let suppressClickUntil = 0;
@@ -1015,29 +1013,12 @@ function updateAnalysis() {
   }
   ui['comparison-body'].replaceChildren(fragment);
 }
-function runSimulation() {
-  worker?.terminate();
-  stats = null;
-  ui['compute-state'].textContent = '計算中 0%';
-  ui['run-simulation'].disabled = true;
-  ui['comparison-body'].replaceChildren();
-  worker = new Worker(new URL('../dist/worker.mjs', import.meta.url), { type: 'module' });
-  worker.onmessage = ({ data }) => {
-    if (data.rows) {
-      stats = data.rows;
-      ui['compute-state'].textContent = '計算完成';
-      ui['run-simulation'].disabled = false;
-      worker.terminate();
-      worker = null;
-      updateAnalysis();
-    } else ui['compute-state'].textContent = `計算中 ${Math.round(data.progress * 100)}%`;
-  };
-  worker.onerror = () => {
-    ui['compute-state'].textContent = '模擬未完成';
-    ui['run-simulation'].disabled = false;
-  };
-  simulationNumber += 1;
-  worker.postMessage({ samples: 300000, doubleReplay: settings().doubleReplay, bonus: settings().bonus, seed: `chance-lab-${simulationNumber}` });
+// Instant lookup from a precomputed, fixed two-million-shuffle reference dataset.
+function showFixedProbabilities() {
+  const {bonus,doubleReplay}=settings();
+  stats=fixedProbabilityRows({bonus,doubleReplay});
+  ui['compute-state'].textContent=`固定資料 · ${(FIXED_SAMPLE_COUNT/10000).toLocaleString('zh-TW')} 萬局預算`;
+  updateAnalysis();
 }
 
 ui.pool.addEventListener('click', event => {
@@ -1128,7 +1109,6 @@ $('run-start').addEventListener('click', () => { if ($('play-settings').open) $(
 $('run-stop').addEventListener('click', () => stopRun());
 $('run-stop-table').addEventListener('click', () => stopRun());
 $('run-mode').addEventListener('change', () => { if(isRunning) stopRun(); $('run-count-field').hidden = $('run-mode').value === 'win'; $('run-count').disabled = $('run-mode').value === 'win'; });
-ui['run-simulation'].addEventListener('click', runSimulation);
 ui['comparison-body'].addEventListener('click', event => {
   const row = event.target.closest('tr[data-draws]');
   if (!row) return;
@@ -1145,17 +1125,13 @@ ui.draws.addEventListener('input', updateAnalysis);
 ui.draws.addEventListener('input', () => { if(isRunning) stopRun(); });
 ui.draws.addEventListener('change', () => newRound());
 for (const id of ['bonus','double-replay']) ui[id].addEventListener('change', () => {
-  clearTimeout(simulationTimer);
-  stats=null;
-  worker?.terminate();
-  worker=null;
-  if($('probability').open)simulationTimer=setTimeout(runSimulation,120);
+  showFixedProbabilities();
   newRound();
 });
 ui.seed.addEventListener('change', () => { if (ui['lock-seed'].checked) newRound(); });
 ui['lock-seed'].addEventListener('change', () => { if (ui['lock-seed'].checked) say('已固定種子；下一局會重現同一副牌。'); });
 const showHelp = () => { if (!$('help').open) $('help').showModal(); };
-$('probability-open').addEventListener('click', () => { if (!$('probability').open) $('probability').showModal(); if(!stats&&!worker)runSimulation(); });
+$('probability-open').addEventListener('click', () => { showFixedProbabilities(); if (!$('probability').open) $('probability').showModal(); });
 $('probability-close').addEventListener('click', () => $('probability').close());
 $('probability').addEventListener('click', event => {
   if (event.target !== $('probability')) return;
@@ -1195,9 +1171,7 @@ $('history-list').addEventListener('click', event => {
   restorePreferences(record.preferences || {'draws':String(record.draws)});
   localData.preferences = readPreferences();
   persistLocalData();
-  updateAnalysis();
-  stats=null;
-  if($('probability').open)runSimulation();
+  showFixedProbabilities();
   newRound({reproduce:true,replayRecord:record});
 });
 function resetGame(all = false) {
@@ -1217,20 +1191,15 @@ function resetGame(all = false) {
     $('run-count-field').hidden = false;
     $('run-count').disabled = false;
     roundNumber = 0;
-    stats = null;
-    clearTimeout(simulationTimer);
-    worker?.terminate();
-    worker = null;
-    ui['comparison-body'].replaceChildren();
-    ui['compute-state'].textContent = '尚未計算';
-    ui['run-simulation'].disabled = false;
+    stats = fixedProbabilityRows({bonus:5,doubleReplay:true});
+    ui['compute-state'].textContent = '固定資料';
     setTheme('black');
     applySound(true);
   }
   localData.preferences = readPreferences();
   persistLocalData();
   renderHistory();
-  updateAnalysis();
+  showFixedProbabilities();
   newRound();
   say(all ? '已全部重置' : '金額、剩餘局數與統計已歸零');
 }
@@ -1252,8 +1221,8 @@ function setTheme(theme) {
 }
 $('theme-toggle').addEventListener('click', () => setTheme(document.documentElement.dataset.theme === 'black' ? 'light' : 'black'));
 try { setTheme(localStorage.getItem('bingo-theme') || 'black'); } catch { setTheme('black'); }
-window.addEventListener('pagehide', () => { window.removeEventListener('devicemotion',handleMotion); for(const ghost of bonusGhosts)ghost.remove(); waitingFocus=null; if(poolSettleFrame)cancelAnimationFrame(poolSettleFrame); recordCurrentRound(); isRunning=false; tileAudio.stop(); cancelShuffle(); poolObserver.disconnect(); worker?.terminate(); clearTimeout(toastTimer); clearTimeout(simulationTimer); clearTimeout(recordTimer); });
-updateAnalysis();
+window.addEventListener('pagehide', () => { window.removeEventListener('devicemotion',handleMotion); for(const ghost of bonusGhosts)ghost.remove(); waitingFocus=null; if(poolSettleFrame)cancelAnimationFrame(poolSettleFrame); recordCurrentRound(); isRunning=false; tileAudio.stop(); cancelShuffle(); poolObserver.disconnect(); clearTimeout(toastTimer); clearTimeout(recordTimer); });
+showFixedProbabilities();
 newRound();
 
 const mobileLayout = matchMedia('(max-width:700px)');
