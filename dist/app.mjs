@@ -1,5 +1,5 @@
 import { createTileAudio } from './audio.mjs';
-import { analyze, economics, TILE_COUNT } from './math.mjs';
+import { analyze, economics, TILE_COUNT, LINES } from './math.mjs';
 import { createBodies, stepBodies } from './shuffle.mjs';
 import { loadLocalData, upsertRecord, saveLocalData, clearLocalData, validBoard } from './records.mjs';
 import { emptyLiveStats, normalizeLiveStats, purchaseGames, beginPlayedRound, completePlayedRound } from './live.mjs';
@@ -52,6 +52,9 @@ let finishShuffle = null;
 let poolBodies = [];
 let poolWidth = 0;
 let poolHeight = 0;
+let poolObstacle=null;
+let motionEnabled=false,motionFrame=0,motionPrevious=0,lastShake=0,motionReceived=false;
+const tilt={x:0,y:0};
 const placementAnimations = new Set();
 let isRunning = false;
 let runGeneration = 0;
@@ -264,6 +267,7 @@ function face(id) {
 function tileName(id) { return ui.appearance.value === 'numbers' ? `${id + 1} 號` : names[id]; }
 
 function renderBoard() {
+  ui.board.classList.remove('bonus-focus');
   const fragment = document.createDocumentFragment();
   for (const [position, id] of board.entries()) {
     const cell = document.createElement('button');
@@ -283,6 +287,12 @@ function renderBoard() {
   }
   ui.board.replaceChildren(fragment);
   updateBoard();
+}
+function focusWaitingLines(){
+ const chosen=new Set(selected.map(id=>board.indexOf(id)));
+ const preserved=new Set(LINES.filter(line=>line.filter(p=>!chosen.has(p)).length===1).flat());
+ for(const [p,cell] of [...ui.board.children].entries())cell.classList.toggle('bonus-irrelevant',!preserved.has(p));
+ if(preserved.size)ui.board.classList.add('bonus-focus');
 }
 function updateBoard() {
   const positions = [...placed].map(id => board.indexOf(id));
@@ -324,27 +334,26 @@ function paintPool() {
   }
 }
 
-function layoutPool(reset = false) {
-  const width = ui.pool.clientWidth;
-  const height = ui.pool.clientHeight;
-  if (!width || !height) return;
-  const tileWidth = Math.min(38, Math.max(18, Math.min(width / 13, Math.sqrt(width * height / (TILE_COUNT * 2.15)))));
-  const tileHeight = tileWidth * 1.4;
-  if (reset || poolBodies.length !== TILE_COUNT) {
-    poolBodies = createBodies({count:TILE_COUNT,width,height,tileWidth,tileHeight,random:secureRandom});
-  } else {
-    for (const body of poolBodies) {
-      body.x *= width / poolWidth;
-      body.y *= height / poolHeight;
-      body.halfWidth = tileWidth / 2;
-      body.halfHeight = tileHeight / 2;
-    }
-  }
-  poolWidth = width;
-  poolHeight = height;
-  for (let i = 0; i < 100; i += 1) stepBodies(poolBodies,{width,height,dt:1/120});
-  paintPool();
+function stageGeometry(){
+ const stage=$('pool-stage'),w=stage.clientWidth,h=stage.clientHeight;if(!w||!h)return null;
+ const head=Math.max(46,Math.min(112,h*(h<280?.23:.21)));
+ const bw=Math.max(90,Math.min(w*.74,350,(h-head-4)*.86));
+ const wrap=stage.querySelector('.board-wrap');wrap.style.width=bw+'px';wrap.style.height=(bw/.86)+'px';wrap.style.top=head+'px';
+ const B=wrap.getBoundingClientRect(),P=ui.pool.getBoundingClientRect();
+ return {left:B.left-P.left-2,right:B.right-P.left+2,top:B.top-P.top-2,bottom:B.bottom-P.top+2};
 }
+function layoutPool(reset=false){
+ const width=ui.pool.clientWidth,height=ui.pool.clientHeight;if(!width||!height)return;
+ const obstacle=stageGeometry();if(!obstacle)return;
+ const area=Math.max(1,width*height-(obstacle.right-obstacle.left)*(obstacle.bottom-obstacle.top));
+ const tw=Math.min(38,Math.max(17,Math.sqrt(area/(TILE_COUNT*2.1)))),th=tw*1.4;
+ if(reset||poolBodies.length!==TILE_COUNT){poolBodies=createBodies({count:TILE_COUNT,width,height,tileWidth:tw,tileHeight:th,random:secureRandom});}
+ else for(const body of poolBodies){body.x*=width/Math.max(1,poolWidth);body.y*=height/Math.max(1,poolHeight);body.halfWidth=tw/2;body.halfHeight=th/2;}
+ poolWidth=width;poolHeight=height;poolObstacle=obstacle;
+ for(let i=0;i<80;i++)stepBodies(poolBodies,{width,height,dt:1/120,obstacle});
+ paintPool();
+}
+
 const poolObserver = new ResizeObserver(() => {
   if (ui.pool.clientWidth !== poolWidth || ui.pool.clientHeight !== poolHeight) layoutPool();
 });
@@ -380,6 +389,9 @@ function updateControls() {
   const config = settings();
   const limit = config.draws + bonusCount;
   ui['draw-counter'].textContent = `${selected.length} / ${limit}`;
+  $('draw-quick-count').textContent = `${config.draws} 張`;
+  $('draw-minus').disabled = config.draws <= 6 || isRunning;
+  $('draw-plus').disabled = config.draws >= 30 || isRunning;
   ui['pool-count'].textContent = `${TILE_COUNT - selected.length} 張`;
   $('table-area').style.setProperty('--pool-weight', selected.length === TILE_COUNT ? '.15fr' : '.72fr');
   $('tile-counts').textContent = `總共 ${TILE_COUNT} · 已摸 ${selected.length} · 待摸 ${Math.max(0,limit-selected.length)}`;
@@ -438,6 +450,7 @@ function checkRound() {
     phase = 'bonus';
     baseTargets = info.targets.map(position => board[position]);
     bonusCount = Math.min(config.bonus, TILE_COUNT - config.draws);
+    focusWaitingLines();
     status(`聽牌，補摸 ${bonusCount} 張`, `等 ${baseTargets.map(tileName).join('、')}`);
     updateControls();
   } else {
@@ -487,16 +500,17 @@ function pick(index, { holdInHand = false } = {}) {
   const id = deck[index];
   tileAudio.play('pick');
   selected = [...selected, id];
-  if (!holdInHand && (ui['auto-place'].checked || isRunning)) {
+  if (!holdInHand && (ui['auto-place'].checked || isRunning || phase === 'bonus')) {
     revealed.add(id);
     placed.add(id);
     animatePlacement(id, button);
   }
+  if(poolBodies[index])poolBodies[index].picked=true;
   button.classList.add('picked');
   button.disabled = true;
   button.setAttribute('aria-label', `第 ${index + 1} 張牌已選`);
   checkRound();
-  if (holdInHand || (!ui['auto-place'].checked && !isRunning)) animateToHand(id, button);
+  if (holdInHand || (!ui['auto-place'].checked && !isRunning && phase !== 'bonus')) animateToHand(id, button);
 }
 function placeTile(id, position, source = null) {
   if (!selected.includes(id) || placed.has(id) || !revealed.has(id)) return;
@@ -552,7 +566,7 @@ async function animateShuffle(duration) {
       const steps = Math.max(1, Math.ceil(dt * 120));
       for (let i = 0; i < steps; i += 1) {
         elapsedSimulation += dt / steps;
-        stepBodies(poolBodies,{width:poolWidth,height:poolHeight,dt:dt/steps,time:phaseOffset+elapsedSimulation,driving:elapsed < duration * .66});
+        stepBodies(poolBodies,{width:poolWidth,height:poolHeight,dt:dt/steps,time:phaseOffset+elapsedSimulation,driving:elapsed < duration * .66,obstacle:poolObstacle});
       }
       if (elapsed < duration * .75) tileAudio.play('shuffle');
       paintPool();
@@ -763,7 +777,7 @@ function updateAnalysis() {
   renderLiveStats();
   if (!stats) return;
   const fragment = document.createDocumentFragment();
-  for (const item of stats.filter(item => item.draws >= 10 && item.draws <= 15)) {
+  for (const item of stats.filter(item => item.draws >= 6 && item.draws <= 30)) {
     const values = economics({ ...config, ...item,prize:0 });
     const tr = document.createElement('tr');
     tr.classList.toggle('selected', item.draws === config.draws);
@@ -913,6 +927,13 @@ for (const id of ['games','price']) ui[id].addEventListener('input', updateAnaly
 ui.draws.addEventListener('input', updateAnalysis);
 ui.draws.addEventListener('input', () => { if(isRunning) stopRun(); });
 ui.draws.addEventListener('change', () => newRound());
+for(const [id,delta] of [['draw-minus',-1],['draw-plus',1]]) $(id).addEventListener('click',()=>{
+ if(isRunning)return;
+ const next=Math.max(6,Math.min(30,Number(ui.draws.value)+delta));
+ if(next===Number(ui.draws.value))return;
+ ui.draws.value=String(next);
+ localData.preferences=readPreferences();persistLocalData();updateAnalysis();newRound();
+});
 for (const id of ['bonus','double-replay']) ui[id].addEventListener('change', () => {
   clearTimeout(simulationTimer);
   stats=null;
@@ -1021,9 +1042,50 @@ function setTheme(theme) {
 }
 $('theme-toggle').addEventListener('click', () => setTheme(document.documentElement.dataset.theme === 'black' ? 'light' : 'black'));
 try { setTheme(localStorage.getItem('bingo-theme') || 'black'); } catch { setTheme('black'); }
-window.addEventListener('pagehide', () => { recordCurrentRound(); isRunning=false; tileAudio.stop(); cancelShuffle(); poolObserver.disconnect(); worker?.terminate(); clearTimeout(toastTimer); clearTimeout(simulationTimer); clearTimeout(recordTimer); });
+window.addEventListener('pagehide', () => { stopMotion(); recordCurrentRound(); isRunning=false; tileAudio.stop(); cancelShuffle(); poolObserver.disconnect(); worker?.terminate(); clearTimeout(toastTimer); clearTimeout(simulationTimer); clearTimeout(recordTimer); });
 updateAnalysis();
 newRound();
+
+
+function deviceMotion(event){
+ motionReceived=true;
+ const g=event.accelerationIncludingGravity||event.acceleration;
+ if(g){const x=Math.max(-1,Math.min(1,(g.x||0)/9.8)),y=Math.max(-1,Math.min(1,(g.y||0)/9.8));tilt.x=tilt.x*.7+x*.3;tilt.y=tilt.y*.7-y*.3;}
+ const a=event.acceleration,intensity=a?Math.hypot(a.x||0,a.y||0,a.z||0):0;
+ if(intensity>12&&performance.now()-lastShake>400){
+  lastShake=performance.now();
+  for(const b of poolBodies){if(b.picked)continue;b.vx+=(secureRandom()-.5)*700;b.vy+=(secureRandom()-.5)*700;b.spin+=(secureRandom()-.5)*11;}
+  tileAudio.play('shuffle');
+ }
+}
+function stopMotion(){
+ motionEnabled=false;tilt.x=0;tilt.y=0;window.removeEventListener('devicemotion',deviceMotion);
+ cancelAnimationFrame(motionFrame);motionFrame=0;motionPrevious=0;
+ const b=$('motion-toggle');b.textContent='搖晃：關';b.setAttribute('aria-pressed','false');
+}
+function motionTick(now){
+ if(!motionEnabled)return;
+ const dt=motionPrevious?Math.min(.03,(now-motionPrevious)/1000):1/60;motionPrevious=now;
+ if(phase!=='shuffling'&&poolWidth>0&&document.visibilityState==='visible'){
+  const steps=Math.max(1,Math.ceil(dt*90));
+  for(let i=0;i<steps;i++)stepBodies(poolBodies,{width:poolWidth,height:poolHeight,dt:dt/steps,obstacle:poolObstacle,gravity:{x:tilt.x*650,y:tilt.y*650}});
+  paintPool();
+ }
+ motionFrame=requestAnimationFrame(motionTick);
+}
+$('motion-toggle').addEventListener('click',async()=>{
+ if(motionEnabled){stopMotion();return;}
+ if(typeof DeviceMotionEvent==='undefined'){say('這個瀏覽器沒有手機動作感測器');return;}
+ try{
+  if(typeof DeviceMotionEvent.requestPermission==='function'){
+   const p=await DeviceMotionEvent.requestPermission();if(p!=='granted'){say('未允許動作感測器權限');return;}
+  }
+  motionReceived=false;window.addEventListener('devicemotion',deviceMotion,{passive:true});
+  motionEnabled=true;$('motion-toggle').textContent='搖晃：開';$('motion-toggle').setAttribute('aria-pressed','true');
+  motionFrame=requestAnimationFrame(motionTick);
+  setTimeout(()=>{if(motionEnabled&&!motionReceived)say('尚未收到感測器資料，請用手機 HTTPS 網站開啟');},1800);
+ }catch(error){say('無法啟用動作感測器：'+error.message);}
+});
 
 const mobileLayout = matchMedia('(max-width:700px)');
 const settingsPanel = document.querySelector('.settings.panel');

@@ -50,17 +50,30 @@ function collide(a, b) {
   b.spin -= tangent * .0025;
 }
 
-function constrain(body, width, height) {
+function pushOutObstacle(b,o,width,height,ex,ey){
+ if(!o||b.x+ex<=o.left||b.x-ex>=o.right||b.y+ey<=o.top||b.y-ey>=o.bottom)return;
+ const options=[
+ {d:Math.abs(b.x+ex-o.left),x:o.left-ex-.5},{d:Math.abs(o.right-b.x+ex),x:o.right+ex+.5},
+ {d:Math.abs(b.y+ey-o.top),y:o.top-ey-.5},{d:Math.abs(o.bottom-b.y+ey),y:o.bottom+ey+.5}
+ ].filter(v=>v.x===undefined?v.y>=ey&&v.y<=height-ey:v.x>=ex&&v.x<=width-ex).sort((x,y)=>x.d-y.d);
+ const v=options[0];if(!v)return;
+ if(v.x!==undefined){b.x=v.x;b.vx=Math.sign(v.x-(o.left+o.right)/2)*Math.max(5,Math.abs(b.vx)*.35);}
+ else{b.y=v.y;b.vy=Math.sign(v.y-(o.top+o.bottom)/2)*Math.max(5,Math.abs(b.vy)*.35);}
+}
+function constrain(body, width, height, obstacle) {
   const extentX = Math.abs(Math.cos(body.angle)) * body.halfWidth + Math.abs(Math.sin(body.angle)) * body.halfHeight + 2;
   const extentY = Math.abs(Math.sin(body.angle)) * body.halfWidth + Math.abs(Math.cos(body.angle)) * body.halfHeight + 2;
   if (body.x < extentX) { body.x = extentX; body.vx = Math.abs(body.vx) * .35; }
   if (body.x > width - extentX) { body.x = width - extentX; body.vx = -Math.abs(body.vx) * .35; }
   if (body.y < extentY) { body.y = extentY; body.vy = Math.abs(body.vy) * .35; }
   if (body.y > height - extentY) { body.y = height - extentY; body.vy = -Math.abs(body.vy) * .35; }
+  pushOutObstacle(body,obstacle,width,height,extentX,extentY);
 }
 
-export function stepBodies(bodies, { width, height, dt, time = 0, driving = false }) {
+export function stepBodies(bodies, { width, height, dt, time = 0, driving = false, obstacle = null, gravity = null }) {
   for (const body of bodies) {
+    if(body.picked)continue;
+    if(gravity){body.vx+=gravity.x*dt;body.vy+=gravity.y*dt;}
     if (driving) {
       // Two opposing sweeps imitate hands pushing tiles through the middle.
       for (let hand = 0; hand < 2; hand += 1) {
@@ -74,7 +87,7 @@ export function stepBodies(bodies, { width, height, dt, time = 0, driving = fals
         body.spin += Math.sin(body.phase + phase) * influence * dt * 13;
       }
     }
-    const drag = Math.exp(-(driving ? 1.2 : 6.5) * dt);
+    const drag = Math.exp(-(driving ? 1.2 : gravity ? 2.5 : 6.5) * dt);
     body.vx *= drag;
     body.vy *= drag;
     body.spin *= Math.exp(-(driving ? 2 : 9) * dt);
@@ -84,8 +97,8 @@ export function stepBodies(bodies, { width, height, dt, time = 0, driving = fals
   }
   for (let pass = 0; pass < 3; pass += 1) {
     for (let i = 0; i < bodies.length; i += 1) {
-      for (let j = i + 1; j < bodies.length; j += 1) collide(bodies[i], bodies[j]);
+      for (let j = i + 1; j < bodies.length; j += 1) if(!bodies[i].picked&&!bodies[j].picked)collide(bodies[i],bodies[j]);
     }
-    for (const body of bodies) constrain(body, width, height);
+    for (const body of bodies) if(!body.picked)constrain(body,width,height,obstacle);
   }
 }
