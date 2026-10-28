@@ -1017,7 +1017,7 @@ function updateAnalysis() {
 function showFixedProbabilities() {
   const {bonus,doubleReplay}=settings();
   stats=fixedProbabilityRows({bonus,doubleReplay});
-  ui['compute-state'].textContent=`固定資料 · ${(FIXED_SAMPLE_COUNT/10000).toLocaleString('zh-TW')} 萬局預算`;
+  ui['compute-state'].textContent=`固定資料 · ${(FIXED_SAMPLE_COUNT/10000).toLocaleString('zh-TW')} 萬局樣本`;
   updateAnalysis();
 }
 
