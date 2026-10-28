@@ -51,15 +51,39 @@
 .mobile-settings-actions{display:flex;gap:14px;align-items:center;margin:14px 0}.mobile-settings-actions button{font-size:12px;min-height:32px}
 
 /* Mahjong Bingo v2: tappable side pool, shake physics, falling bonus misses */
-.board-wrap{position:relative}
-.side-pool{position:absolute;top:9%;bottom:7%;width:clamp(27px,3vw,42px);z-index:3;display:flex;align-items:center;justify-content:center;padding:3px;border:1px dashed #c8dcc085;border-radius:13px;background:linear-gradient(180deg,#d1e2cb19,#71997620);color:#dbead9;font-size:11px;letter-spacing:2px;writing-mode:vertical-rl;touch-action:manipulation;user-select:none}
-.side-pool-left{right:calc(100% + 4px)}.side-pool-right{left:calc(100% + 4px)}
-.side-pool:hover:not(:disabled),.side-pool:active:not(:disabled){background:#a9c6a647;border-color:#d4e7c5}
-.side-pool:disabled{opacity:.3}
 .bonus-fall-ghost{position:fixed;z-index:90;pointer-events:none;padding:2px;background:#f5f6e9;border-radius:4px;box-shadow:0 3px 8px #0009;will-change:transform,opacity}
 .bonus-fall-ghost .tile-face,.bonus-fall-ghost .number-face{width:100%;height:100%;object-fit:contain}
 .cell.bonus-discarded{background:#385a4e30;border-color:#b2d0bd30;box-shadow:none}
 .cell.bonus-discarded .tile-face,.cell.bonus-discarded .number-face{opacity:.13;filter:grayscale(1);mix-blend-mode:screen}
 #motion-toggle[aria-pressed=true]{color:#f9df95}
-@media(max-width:700px){.side-pool{width:clamp(23px,7vw,32px);top:8%;bottom:6%;font-size:10px;letter-spacing:1px}.side-pool-left{right:calc(100% + 3px)}.side-pool-right{left:calc(100% + 3px)}.pool-counts{gap:4px}.pool-counts>span{font-size:9px}#motion-toggle{font-size:9px;white-space:nowrap}}
+@media(max-width:700px){.pool-counts{gap:4px}.pool-counts>span{font-size:9px}#motion-toggle{font-size:9px;white-space:nowrap}}
 @media(prefers-reduced-motion:reduce){.bonus-fall-ghost{display:none}}
+
+/* v2.1 unified U-shaped tile pool: the same 36 pickable tile backs continue
+   below the upper tray, surrounding both edges of the central board. */
+@media(max-width:700px) and (orientation:portrait){
+  .table-panel,.table-panel.is-running{
+    grid-template-columns:minmax(0,1fr);
+    grid-template-rows:28px 22px minmax(50px,var(--pool-weight,.72fr)) minmax(112px,1.7fr) 32px var(--hand-height,94px);
+    gap:3px
+  }
+  .table-panel>.pool,.table-panel.is-running>.pool{
+    grid-column:1;grid-row:3 / 5;
+    position:relative;min-height:0;min-width:0;width:100%;height:100%;z-index:1
+  }
+  .table-panel>.board-wrap,.table-panel.is-running>.board-wrap{
+    grid-column:1;grid-row:4;position:relative;z-index:2
+  }
+  .table-panel>.status-strip,.table-panel.is-running>.status-strip{grid-column:1;grid-row:5}
+  .table-panel>.tray-section,.table-panel.is-running>.tray-section{grid-column:1;grid-row:6}
+  .table-panel .tray,.table-panel.is-running .tray{
+    grid-template-columns:repeat(12,minmax(0,1fr));
+    grid-template-rows:repeat(var(--hand-rows,1),minmax(0,1fr));
+    overflow:visible
+  }
+  .table-panel .tray-section{overflow:visible}
+  .table-panel .tray .hand-tile{height:100%;width:100%;max-width:32px;min-height:0}
+}
+@media(max-width:700px) and (orientation:landscape){
+  .table-panel .tray-section,.table-panel .tray{overflow-y:auto}
+}
