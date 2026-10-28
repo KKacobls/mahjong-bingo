@@ -1,5 +1,5 @@
 import { createTileAudio } from '../dist/audio.mjs';
-import { analyze, economics, TILE_COUNT } from '../dist/math.mjs';
+import { analyze, economics, TILE_COUNT, LINES } from '../dist/math.mjs';
 import { createBodies, stepBodies } from '../dist/shuffle.mjs';
 import { loadLocalData, upsertRecord, saveLocalData, clearLocalData, validBoard } from '../dist/records.mjs';
 import { emptyLiveStats, normalizeLiveStats, purchaseGames, beginPlayedRound, completePlayedRound } from '../dist/live.mjs';
@@ -53,6 +53,8 @@ let poolBodies = [];
 let poolWidth = 0;
 let poolHeight = 0;
 const bonusFallen = new Set();
+// The physical 6×6 board keeps its logical state; only its presentation sheds tiles.
+let waitingFocus = null; // Set of six positions in the single waiting line, or null.
 const bonusGhosts = new Set();
 let motionEnabled = false;
 let motionLast = null;
@@ -301,6 +303,7 @@ function updateBoard() {
     if (id === undefined) continue;
     cell.classList.toggle('placed', placed.has(id));
     cell.classList.toggle('bonus-discarded', bonusFallen.has(id));
+    cell.classList.toggle('spotlight-dropped', waitingFocus !== null && !waitingFocus.has(position));
     cell.classList.toggle('winning', winning.has(position));
     cell.classList.toggle('waiting', !winning.size && targets.has(position));
     cell.setAttribute('aria-label', `${String.fromCharCode(65 + position % 6)}${Math.floor(position / 6) + 1}，${tileName(id)}，${placed.has(id) ? '已放置' : '未放置'}`);
@@ -540,6 +543,55 @@ function finishRound(nextPhase, title, detail) {
   updateControls();
   recordCurrentRound();
 }
+
+// After the initial draw is fully placed, visually clear away EVERY tile unrelated
+// to the ONE-TILE waiting line. This must not mutate the board, placed, or selected arrays.
+function focusOnSingleWait(info) {
+  if (waitingFocus || info.targets.length !== 1) return;
+  const chosen = new Set(selected.map(id=>board.indexOf(id)));
+  const target = info.targets[0];
+  const keep = new Set();
+  for (const line of LINES) {
+    if (!line.includes(target)) continue;
+    const missing=line.filter(position=>!chosen.has(position));
+    if (missing.length===1 && missing[0]===target) for(const position of line)keep.add(position);
+  }
+  if (!keep.size) return;
+  waitingFocus=keep;
+  const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const animate=!reduced && !isRunning;
+  // Take a visual snapshot BEFORE hiding the unwanted cells.
+  for (const [position,cell] of [...ui.board.children].entries()) {
+    if(keep.has(position))continue;
+    if(animate) {
+      const box=cell.getBoundingClientRect();
+      const ghost=cell.cloneNode(true);
+      ghost.removeAttribute('id');
+      ghost.className='board-fall-ghost'+(placed.has(board[position])?' is-placed':' is-unplaced');
+      ghost.style.left=box.left+'px';
+      ghost.style.top=box.top+'px';
+      ghost.style.width=box.width+'px';
+      ghost.style.height=box.height+'px';
+      ghost.setAttribute('aria-hidden','true');
+      document.body.append(ghost);
+      bonusGhosts.add(ghost);
+      const spin=(secureRandom()-.5)*620;
+      const shift=(secureRandom()-.5)*190;
+      const distance=window.innerHeight-box.top+box.height+120;
+      const delay=secureRandom()*180;
+      const animation=ghost.animate([
+        {transform:'translate3d(0,0,0) rotate(0deg)',opacity:1,offset:0},
+        {transform:`translate3d(${shift*.25}px,-25px,0) rotate(${spin*.15}deg)`,opacity:1,offset:.17},
+        {transform:`translate3d(${shift}px,${distance}px,0) rotate(${spin}deg)`,opacity:0,offset:1}
+      ],{duration:950+secureRandom()*340,delay,easing:'cubic-bezier(.25,.1,.66,.98)',fill:'forwards'});
+      animation.finished.catch(()=>{}).finally(()=>{ghost.remove();bonusGhosts.delete(ghost)});
+    }
+    cell.classList.add('spotlight-dropped');
+  }
+  // Ensure a unique logical target stays visible and highlighted.
+  updateBoard();
+}
+
 // Bonus misses fall under simulated gravity; the game result still checks all five drawn IDs.
 function fallBonusMisses(drawCount) {
   for (const id of selected.slice(drawCount)) {
@@ -605,7 +657,8 @@ function checkRound() {
     phase = 'bonus';
     baseTargets = info.targets.map(position => board[position]);
     bonusCount = Math.min(config.bonus, TILE_COUNT - config.draws);
-    status(`聽牌，補摸 ${bonusCount} 張`, `等 ${baseTargets.map(tileName).join('、')}`);
+    if (info.targets.length === 1) focusOnSingleWait(info);
+    status(`聽牌，補摸 ${bonusCount} 張`, `只保留聽牌線，等 ${baseTargets.map(tileName).join('、')}`);
     updateControls();
   } else {
     finishRound('lost', '未中獎', '');
@@ -654,10 +707,14 @@ function pick(index, { holdInHand = false } = {}) {
   const id = deck[index];
   tileAudio.play('pick');
   selected = [...selected, id];
-  if (!holdInHand && (ui['auto-place'].checked || isRunning)) {
+  // When only the waiting row remains, bonus misses cannot be manually
+  // dropped into removed cells. Auto-process all five bonus picks instead.
+  if (!holdInHand && (ui['auto-place'].checked || isRunning || (phase === 'bonus' && waitingFocus !== null))) {
     revealed.add(id);
     placed.add(id);
-    animatePlacement(id, button);
+    if (phase !== 'bonus' || waitingFocus === null || baseTargets.includes(id)) {
+      animatePlacement(id, button);
+    }
   }
   button.classList.add('picked');
   button.disabled = true;
@@ -862,6 +919,7 @@ async function newRound({ reproduce = false, runner = false, replayRecord = null
   for (const ghost of bonusGhosts) ghost.remove();
   bonusGhosts.clear();
   bonusFallen.clear();
+  waitingFocus = null;
   if (poolSettleFrame) cancelAnimationFrame(poolSettleFrame);
   poolSettleFrame = 0;
   flightNodes = new Set();
@@ -1194,7 +1252,7 @@ function setTheme(theme) {
 }
 $('theme-toggle').addEventListener('click', () => setTheme(document.documentElement.dataset.theme === 'black' ? 'light' : 'black'));
 try { setTheme(localStorage.getItem('bingo-theme') || 'black'); } catch { setTheme('black'); }
-window.addEventListener('pagehide', () => { window.removeEventListener('devicemotion',handleMotion); for(const ghost of bonusGhosts)ghost.remove(); if(poolSettleFrame)cancelAnimationFrame(poolSettleFrame); recordCurrentRound(); isRunning=false; tileAudio.stop(); cancelShuffle(); poolObserver.disconnect(); worker?.terminate(); clearTimeout(toastTimer); clearTimeout(simulationTimer); clearTimeout(recordTimer); });
+window.addEventListener('pagehide', () => { window.removeEventListener('devicemotion',handleMotion); for(const ghost of bonusGhosts)ghost.remove(); waitingFocus=null; if(poolSettleFrame)cancelAnimationFrame(poolSettleFrame); recordCurrentRound(); isRunning=false; tileAudio.stop(); cancelShuffle(); poolObserver.disconnect(); worker?.terminate(); clearTimeout(toastTimer); clearTimeout(simulationTimer); clearTimeout(recordTimer); });
 updateAnalysis();
 newRound();
 
