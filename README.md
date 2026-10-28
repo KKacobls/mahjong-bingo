@@ -21,3 +21,5 @@
 執行 `node build.mjs` 從 dist 產生兩份 HTML；執行 `node --test tests/*.test.mjs` 驗證計算、帳務、儲存與洗牌碰撞。
 
 GitHub Pages 使用 main 分支根目錄。牌圖為使用者提供的 FluffyStuff 麻將素材，CC0，見 LICENSE-tiles.md。
+
+手機牌桌使用可視高度配置，牌池、底盤、手牌及數量同屏；玩法與統計改由頂端按鈕開啟。音效為 Web Audio 合成的牌聲及中獎提示，首次操作後啟用，可靜音並在本機保留選擇。

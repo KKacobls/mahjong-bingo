@@ -1,3 +1,4 @@
+import { createTileAudio } from './audio.mjs';
 import { analyze, economics, TILE_COUNT } from './math.mjs';
 import { createBodies, stepBodies } from './shuffle.mjs';
 import { loadLocalData, upsertRecord, saveLocalData, clearLocalData, validBoard } from './records.mjs';
@@ -5,6 +6,20 @@ import { emptyLiveStats, normalizeLiveStats, purchaseGames, beginPlayedRound, co
 
 const $ = id => document.getElementById(id);
 const ui = Object.fromEntries(['draws','games','price','bonus','double-replay','auto-place','appearance','seed','lock-seed','board','pool','tray','tray-section','status-title','status-detail','draw-counter','round-label','pool-count','seed-label','new-round','auto-draw','place-all','compute-state','comparison-body','config-error','run-simulation','toast'].map(id => [id, $(id)]));
+const tileAudio = createTileAudio();
+let soundEnabled = true;
+try { soundEnabled = localStorage.getItem('bingo-sound') !== 'off'; } catch { /* Storage is optional. */ }
+function applySound(enabled) {
+  soundEnabled = enabled;
+  tileAudio.setEnabled(enabled);
+  $('sound-toggle').textContent = enabled ? '音效開' : '靜音';
+  $('sound-toggle').setAttribute('aria-pressed', String(enabled));
+  try { localStorage.setItem('bingo-sound', enabled ? 'on' : 'off'); } catch { /* Storage is optional. */ }
+}
+applySound(soundEnabled);
+document.addEventListener('pointerdown', () => tileAudio.unlock(), {capture:true});
+document.addEventListener('keydown', () => tileAudio.unlock(), {capture:true});
+$('sound-toggle').addEventListener('click', () => { applySound(!soundEnabled); tileAudio.unlock(); tileAudio.play('flip'); });
 const ids = Array.from({ length: TILE_COUNT }, (_, i) => i);
 const names = [...['萬','筒','索'].flatMap(suit => Array.from({ length: 9 }, (_, i) => `${i + 1}${suit}`)), '東','南','西','北','白','發','中','紅五萬','紅五條'];
 const images = [...['Man','Pin','Sou'].flatMap(suit => Array.from({ length: 9 }, (_, i) => `tiles/${suit}${i + 1}.png`)), ...['Ton','Nan','Shaa','Pei','Haku','Hatsu','Chun','Man5-Dora','Sou5-Dora'].map(name => `tiles/${name}.png`)];
@@ -313,7 +328,7 @@ function layoutPool(reset = false) {
   const width = ui.pool.clientWidth;
   const height = ui.pool.clientHeight;
   if (!width || !height) return;
-  const tileWidth = Math.min(38, Math.max(23, width / 13));
+  const tileWidth = Math.min(38, Math.max(18, Math.min(width / 13, Math.sqrt(width * height / (TILE_COUNT * 2.15)))));
   const tileHeight = tileWidth * 1.4;
   if (reset || poolBodies.length !== TILE_COUNT) {
     poolBodies = createBodies({count:TILE_COUNT,width,height,tileWidth,tileHeight,random:secureRandom});
@@ -336,6 +351,8 @@ const poolObserver = new ResizeObserver(() => {
 poolObserver.observe(ui.pool);
 function renderTray() {
   const pending = selected.filter(id => !placed.has(id));
+  ui.tray.style.setProperty('--hand-rows', String(Math.max(2, Math.ceil(pending.length / 12))));
+  $('table-area').style.setProperty('--hand-weight', pending.length > 24 ? '.8fr' : '.42fr');
   ui['place-all'].hidden = pending.length === 0;
   $('reveal-all').hidden = !pending.some(id => !revealed.has(id));
   const fragment = document.createDocumentFragment();
@@ -364,6 +381,8 @@ function updateControls() {
   const limit = config.draws + bonusCount;
   ui['draw-counter'].textContent = `${selected.length} / ${limit}`;
   ui['pool-count'].textContent = `${TILE_COUNT - selected.length} 張`;
+  $('table-area').style.setProperty('--pool-weight', selected.length === TILE_COUNT ? '.15fr' : '.72fr');
+  $('tile-counts').textContent = `總共 ${TILE_COUNT} · 已摸 ${selected.length} · 待摸 ${Math.max(0,limit-selected.length)}`;
   const canPick = (phase === 'initial' || phase === 'bonus') && selected.length < limit && (roundAccounted || canStartPaidRound());
   for (const button of ui.pool.children) button.disabled = button.classList.contains('picked') || !canPick;
   ui['auto-draw'].disabled = !canPick || isDrawing || isRunning;
@@ -379,6 +398,7 @@ function status(title, detail) {
 }
 function finishRound(nextPhase, title, detail) {
   phase = nextPhase;
+  if (nextPhase === 'won' || nextPhase === 'replay') tileAudio.play(nextPhase === 'won' ? 'win' : 'replay');
   if(roundAccounted&&!roundOutcomeRecorded) {
     localData.live=completePlayedRound(liveTotals(),nextPhase);
     roundOutcomeRecorded=true;
@@ -426,6 +446,7 @@ function checkRound() {
 }
 
 async function animatePlacement(id, source, { duration = 260 } = {}) {
+  tileAudio.play('place');
   const cell = ui.board.children[board.indexOf(id)];
   cell.classList.remove('just-placed');
   if (matchMedia('(prefers-reduced-motion: reduce)').matches || !source) { cell.classList.add('just-placed'); return; }
@@ -464,6 +485,7 @@ function pick(index, { holdInHand = false } = {}) {
     persistLocalData();
   }
   const id = deck[index];
+  tileAudio.play('pick');
   selected = [...selected, id];
   if (!holdInHand && (ui['auto-place'].checked || isRunning)) {
     revealed.add(id);
@@ -485,6 +507,7 @@ function placeTile(id, position, source = null) {
   checkRound();
 }
 function placeAll() {
+  tileAudio.play('place');
   for (const id of selected) { revealed.add(id); placed.add(id); }
   activeTile = null;
   checkRound();
@@ -531,6 +554,7 @@ async function animateShuffle(duration) {
         elapsedSimulation += dt / steps;
         stepBodies(poolBodies,{width:poolWidth,height:poolHeight,dt:dt/steps,time:phaseOffset+elapsedSimulation,driving:elapsed < duration * .66});
       }
+      if (elapsed < duration * .75) tileAudio.play('shuffle');
       paintPool();
       if (elapsed < duration) { shuffleFrame = requestAnimationFrame(frame); return; }
       for (const body of poolBodies) { body.vx=0; body.vy=0; body.spin=0; }
@@ -578,6 +602,7 @@ async function dealAndPlace(indices, token) {
   }
   for (const [index, id] of hand.entries()) {
     if (!isCurrent()) return;
+    tileAudio.play('flip');
     revealed.add(id);
     activeTile = id;
     renderTray();
@@ -867,8 +892,8 @@ $('reset-board').addEventListener('click', async () => { $('no-shuffle').checked
 $('no-shuffle').addEventListener('change', () => newRound());
 ui['auto-draw'].addEventListener('click', autoDraw);
 ui['place-all'].addEventListener('click', placeAll);
-$('reveal-all').addEventListener('click', () => { for (const id of selected) revealed.add(id); renderTray(); });
-$('run-start').addEventListener('click', startRun);
+$('reveal-all').addEventListener('click', () => { tileAudio.play('flip'); for (const id of selected) revealed.add(id); renderTray(); });
+$('run-start').addEventListener('click', () => { if ($('play-settings').open) $('play-settings').close(); startRun(); });
 $('run-stop').addEventListener('click', () => stopRun());
 $('run-stop-table').addEventListener('click', () => stopRun());
 $('run-mode').addEventListener('change', () => { if(isRunning) stopRun(); $('run-count-field').hidden = $('run-mode').value === 'win'; $('run-count').disabled = $('run-mode').value === 'win'; });
@@ -946,6 +971,7 @@ $('history-list').addEventListener('click', event => {
 });
 function resetGame(all = false) {
   if (isRunning) stopRun();
+  for (const id of ['play-settings','stats-dialog']) if ($(id).open) $(id).close();
   clearTimeout(recordTimer);
   currentRecordId = null;
   runResult = null;
@@ -958,6 +984,7 @@ function resetGame(all = false) {
     $('settings-form').reset();
     $('billing-form').reset();
     $('run-count-field').hidden = false;
+    $('run-count').disabled = false;
     roundNumber = 0;
     stats = null;
     clearTimeout(simulationTimer);
@@ -967,6 +994,7 @@ function resetGame(all = false) {
     ui['compute-state'].textContent = '尚未計算';
     ui['run-simulation'].disabled = false;
     setTheme('black');
+    applySound(true);
   }
   localData.preferences = readPreferences();
   persistLocalData();
@@ -993,6 +1021,31 @@ function setTheme(theme) {
 }
 $('theme-toggle').addEventListener('click', () => setTheme(document.documentElement.dataset.theme === 'black' ? 'light' : 'black'));
 try { setTheme(localStorage.getItem('bingo-theme') || 'black'); } catch { setTheme('black'); }
-window.addEventListener('pagehide', () => { recordCurrentRound(); isRunning=false; cancelShuffle(); poolObserver.disconnect(); worker?.terminate(); clearTimeout(toastTimer); clearTimeout(simulationTimer); clearTimeout(recordTimer); });
+window.addEventListener('pagehide', () => { recordCurrentRound(); isRunning=false; tileAudio.stop(); cancelShuffle(); poolObserver.disconnect(); worker?.terminate(); clearTimeout(toastTimer); clearTimeout(simulationTimer); clearTimeout(recordTimer); });
 updateAnalysis();
 newRound();
+
+const mobileLayout = matchMedia('(max-width:700px)');
+const settingsPanel = document.querySelector('.settings.panel');
+const statsPanel = $('live-stats');
+const workspace = document.querySelector('.workspace');
+function syncMobilePanels() {
+  for (const id of ['play-settings','stats-dialog']) if ($(id).open) $(id).close();
+  if (mobileLayout.matches) {
+    $('play-settings-content').append(settingsPanel);
+    $('mobile-settings-actions').append($('help-open'), $('theme-toggle'));
+    $('stats-content').append(statsPanel);
+    $('settings-details').open = true;
+  } else {
+    document.querySelector('.topbar nav').append($('help-open'), $('theme-toggle'));
+    workspace.prepend(settingsPanel);
+    workspace.append(statsPanel);
+  }
+}
+for (const [openId, closeId, dialogId] of [['play-settings-open','play-settings-close','play-settings'],['stats-open','stats-close','stats-dialog']]) {
+  $(openId).addEventListener('click', () => $(dialogId).showModal());
+  $(closeId).addEventListener('click', () => $(dialogId).close());
+  $(dialogId).addEventListener('click', event => { if (event.target === $(dialogId)) $(dialogId).close(); });
+}
+mobileLayout.addEventListener('change', syncMobilePanels);
+syncMobilePanels();

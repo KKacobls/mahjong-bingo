@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="zh-Hant" data-theme="black">
 <head>
-  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#154d43">
   <meta name="description" content="在牌桌上探索隨機。36 張麻將賓果、手動拖拉、連線機率與期望值計算。">
   <title>麻將賓果</title>
@@ -9,7 +9,7 @@
   <script type="module" src="app.mjs"></script>
 </head>
 <body>
-  <header class="topbar"><a class="brand" href="#"><span class="brand-mark">發</span><span>麻將賓果</span></a><nav><a href="#table-area">牌桌</a><button class="text-button" id="probability-open" aria-haspopup="dialog" aria-controls="probability">機率</button><button class="text-button" id="billing-open" aria-haspopup="dialog" aria-controls="billing">設定</button><button class="text-button" id="help-open">規則</button><button class="theme-toggle" id="theme-toggle" aria-pressed="true">背景：黑色</button></nav></header>
+  <header class="topbar"><a class="brand" href="#"><span class="brand-mark">發</span><span>麻將賓果</span></a><nav><button class="text-button mobile-only" id="play-settings-open">玩法</button><button class="text-button mobile-only" id="stats-open">統計</button><button class="text-button" id="sound-toggle" aria-pressed="true" aria-label="音效開關">音效開</button><a href="#table-area">牌桌</a><button class="text-button" id="probability-open" aria-haspopup="dialog" aria-controls="probability">機率</button><button class="text-button" id="billing-open" aria-haspopup="dialog" aria-controls="billing">設定</button><button class="text-button" id="help-open">規則</button><button class="theme-toggle" id="theme-toggle" aria-pressed="true">背景：黑色</button></nav></header>
   <div class="live-mini"><div class="mobile-account"><strong id="mobile-credits">剩餘 0 局</strong><button id="buy-games-mini" class="felt-button">付費購買</button></div><span id="live-mini-values">已完成 0 局 · 中獎 0 次</span><div class="reset-actions"><button type="button" id="reset-money-mobile" class="secondary">重置金額</button><button type="button" id="reset-all-mobile" class="secondary">全部重置</button></div></div>
   <main>
     <div class="workspace">
@@ -28,7 +28,7 @@
       </div></details></aside>
       <section class="table-panel" id="table-area" aria-labelledby="table-title">
         <div class="table-heading"><div><span class="round-label" id="round-label">第 1 局</span><h2 id="table-title">選牌</h2></div><div class="table-actions"><button id="run-stop-table" class="felt-button" hidden>停止跑牌</button><button id="new-round" class="felt-button">↻ 洗牌</button></div></div>
-        <div class="pool-heading"><h3>牌池 <span id="pool-count">36 張</span></h3><button id="auto-draw" class="felt-link">隨機選滿</button></div>
+        <div class="pool-heading pool-counts"><h3>牌池 <span id="pool-count">36 張</span></h3><span id="tile-counts">總共 36 · 已摸 0 · 待摸 15</span><button id="auto-draw" class="felt-link">隨機選滿</button></div>
         <div id="pool" class="pool" aria-label="隨機牌背"></div>
         <div class="board-wrap"><div class="axis-top" aria-hidden="true"><span>A</span><span>B</span><span>C</span><span>D</span><span>E</span><span>F</span></div><div class="board" id="board" aria-label="6 乘 6 對獎底盤"></div></div>
         <div class="table-legend"><span><i class="legend-dot filled"></i> 已放置</span><span><i class="legend-dot waiting"></i> 差一張</span><span><i class="legend-dot winning"></i> 已連線</span><button id="place-all" class="felt-link" hidden>幫我放好</button></div>
@@ -46,6 +46,8 @@
     </div>
     <footer><button id="sources-open" class="text-button">規則與參考</button></footer>
   </main>
+  <dialog id="play-settings" class="mobile-sheet"><div class="dialog-heading"><h2>玩法設定</h2><button class="icon-button" id="play-settings-close" aria-label="關閉玩法設定">×</button></div><div class="mobile-settings-actions" id="mobile-settings-actions"></div><div id="play-settings-content"></div></dialog>
+  <dialog id="stats-dialog" class="mobile-sheet"><div class="dialog-heading"><h2>統計與重置</h2><button class="icon-button" id="stats-close" aria-label="關閉統計">×</button></div><div id="stats-content"></div></dialog>
   <dialog id="probability" class="probability-dialog" aria-labelledby="probability-title"><div class="dialog-heading"><h2 id="probability-title">機率</h2><button class="icon-button" id="probability-close" aria-label="關閉機率">×</button></div><p class="field-note">點張數切換設定 <span id="compute-state">尚未計算</span></p><div class="comparison"><div class="table-scroll"><table><thead><tr><th>摸牌張數</th><th>直接中獎率 <span>精確</span></th><th>免費重來率 <span>估計</span></th><th>最終中獎率 <span>估計</span></th></tr></thead><tbody id="comparison-body"></tbody></table></div></div><button id="run-simulation" class="secondary full">重新計算比較表</button></dialog>
   <dialog id="billing" aria-labelledby="billing-title"><div class="dialog-heading"><h2 id="billing-title">設定</h2><button class="icon-button" id="billing-close" aria-label="關閉設定">×</button></div><form id="billing-form"><label for="games">每次購買局數</label><div class="unit-input"><input id="games" type="number" min="1" max="10000" step="1" value="6" required><span>局</span></div><label for="price">每次價格</label><div class="unit-input"><input id="price" type="number" min="0" max="10000000" step="1" value="100" required><span>元</span></div><button type="submit" class="secondary full billing-save">儲存設定</button></form></dialog>
   <dialog id="help"><div class="dialog-heading"><h2>規則</h2><button class="icon-button" id="help-close" aria-label="關閉說明">×</button></div><p>底盤有 36 張不重複牌。每局從洗好的牌背選你設定的張數（1～36 張；夜市常見 10～15 張），放進底盤相同的牌面；橫、直各 6 條，加上 2 條對角線，共 14 條中任一條湊滿 6 張就中獎。</p><ol><li>點擊牌背摸牌。手牌先蓋著放到下方，點擊翻開後拖到對應位置。勾選「自動擺牌」可省略翻牌與拖拉。</li><li>摸滿後，先判斷是否中獎；沒中再看聽牌。差同一張才能成兩條線，仍算聽一張。</li><li>預設聽兩張以上免費重來；單聽可補摸 5 張。補中只重來，補不中結束。</li><li>「洗牌開新局」會產生全新牌序；「重現這一副」重用本局種子。底盤預設每局隨機；勾選「不打亂」才維持固定順序。重現會保留原底盤與牌序。</li></ol><p>這是規則可調的機率演示；原對話採用的雙聽重來屬本實驗設定，不代表每家夜市規則。</p><p>參考：<a href="https://play.google.com/store/apps/details?id=com.Sapp.BingoMj&hl=zh_TW" target="_blank" rel="noopener">麻將賓果開發者玩法說明</a>、<a href="https://www.nownews.com/news/5945090" target="_blank" rel="noopener">夜市補摸重來玩法報導</a>、<a href="https://github.com/anthropics/skills/blob/main/skills/frontend-design/SKILL.md" target="_blank" rel="noopener">frontend-design skill</a>。</p></dialog>
