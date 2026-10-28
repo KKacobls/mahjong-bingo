@@ -28,7 +28,9 @@ test('one missing tile shared by two lines keeps one full six-cell line',()=>{
  assert.deepEqual(Array.from(line),[0,1,2,3,4,5]);
 });
 test('v3 standalone script is valid javascript and physics fall is present',()=>{
- const script=html.match(/<script type="module">([\\s\\S]*?)<\\/script>/)?.[1];
+ const start=html.indexOf('<script type="module">');
+ const end=html.indexOf('</script>',start);
+ const script=start<0||end<0?'':html.slice(start+'<script type="module">'.length,end);
  assert.ok(script,'standalone inline module');
  assert.doesNotThrow(()=>new vm.Script(script));
  assert.match(html,/--fall-y/);
